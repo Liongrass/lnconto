@@ -13,9 +13,9 @@ import (
 type MacaroonType int
 
 const (
-	MacaroonTypeAccount        MacaroonType = iota // invoices read/write + offchain read/write + info read
-	MacaroonTypeAccountReadonly                    // invoices read + offchain read + info read
-	MacaroonTypeInvoice                            // invoices read/write only
+	MacaroonTypeAccount         MacaroonType = iota // invoices read/write + offchain read/write + info read
+	MacaroonTypeAccountReadonly                     // invoices read + offchain read + info read
+	MacaroonTypeInvoice                             // invoices read/write only
 )
 
 // accountCaveat is the first-party caveat format LiT uses to tie a macaroon to an account.

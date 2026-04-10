@@ -54,7 +54,7 @@ func DefaultConfig() *Config {
 
 // Client wraps all gRPC sub-clients for litd.
 type Client struct {
-	conn     *grpc.ClientConn
+	conn      *grpc.ClientConn
 	Lightning lnrpc.LightningClient
 	Accounts  litrpc.AccountsClient
 	Sessions  litrpc.SessionsClient

@@ -170,9 +170,9 @@ func (m *Model) viewMacaroonTypeModal() string {
 	body := fmt.Sprintf(
 		"%s\n\n%s\n%s\n%s\n\n%s",
 		styleHeader.Render("Generate Macaroon"),
-		styleValue.Render("1") + styleLabel.Render("  Account macaroon       (invoices + offchain r/w)"),
-		styleValue.Render("2") + styleLabel.Render("  Readonly macaroon      (invoices + offchain read)"),
-		styleValue.Render("3") + styleLabel.Render("  Invoice macaroon       (create/read invoices only)"),
+		styleValue.Render("1")+styleLabel.Render("  Account macaroon       (invoices + offchain r/w)"),
+		styleValue.Render("2")+styleLabel.Render("  Readonly macaroon      (invoices + offchain read)"),
+		styleValue.Render("3")+styleLabel.Render("  Invoice macaroon       (create/read invoices only)"),
 		styleHelp.Render("1-3 select type   esc cancel"),
 	)
 	return styleModal.Render(body)

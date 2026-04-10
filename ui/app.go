@@ -48,9 +48,9 @@ type msgLoading struct{ text string }
 
 // Model is the root bubbletea model.
 type Model struct {
-	client  *client.Client
-	width   int
-	height  int
+	client *client.Client
+	width  int
+	height int
 
 	view        View
 	prevView    View
