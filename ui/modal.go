@@ -2,12 +2,14 @@ package ui
 
 import (
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/lnconto/lnconto/client"
 )
 
@@ -18,9 +20,14 @@ func (m *Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case ModalMacaroonType:
 		return m.handleMacaroonTypeKey(msg)
 	case ModalMacaroonResult:
-		// any key closes the result
+		if msg.String() == "c" {
+			return m, copyToClipboard(m.clipboardPayload)
+		}
+		// Any other key closes the modal.
 		m.modal = ModalNone
 		m.modalResult = ""
+		m.clipboardPayload = ""
+		m.copied = false
 		m.view = m.prevView
 		return m, nil
 	}
@@ -229,12 +236,34 @@ func (m *Model) viewResultModal() string {
 	}
 	wrapped := wrapText(m.modalResult, contentW)
 
-	body := fmt.Sprintf("%s\n\n%s\n\n%s",
+	var copyLine string
+	if m.copied {
+		copyLine = styleGreen.Render("✓ Copied to clipboard!")
+	} else {
+		copyLine = styleHelp.Render("c copy to clipboard")
+	}
+
+	body := fmt.Sprintf("%s\n\n%s\n\n%s\n%s",
 		styleHeader.Render("Result"),
 		styleValue.Render(wrapped),
-		styleHelp.Render("any key to close"),
+		copyLine,
+		styleHelp.Render("any other key to close"),
 	)
 	return styleModal.Width(innerW).Render(body)
+}
+
+// copyToClipboard writes the OSC 52 terminal sequence to stdout, which causes
+// the terminal emulator to place text in the system clipboard.  This works in
+// all OSC 52-capable terminals (kitty, Alacritty, WezTerm, iTerm2, GNOME
+// Terminal ≥ 3.38, Foot, Windows Terminal, …).
+func copyToClipboard(text string) tea.Cmd {
+	return func() tea.Msg {
+		// ansi.SetSystemClipboard returns the OSC 52 escape sequence.
+		// Writing it to stdout is safe: the sequence is invisible and the
+		// terminal processes it independently of the rendered TUI output.
+		os.Stdout.WriteString(xansi.SetSystemClipboard(text))
+		return msgCopied{}
+	}
 }
 
 // parseSessionExpiry converts a human-friendly duration string into a Unix

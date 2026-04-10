@@ -46,6 +46,7 @@ type msgSessionCreated struct{ session *litrpc.Session }
 type msgMacaroon struct{ hex string }
 type msgError struct{ err error }
 type msgLoading struct{ text string }
+type msgCopied struct{}
 
 // Model is the root bubbletea model.
 type Model struct {
@@ -76,6 +77,10 @@ type Model struct {
 	modalResult       string
 	modalTitle        string
 	modalSessionLabel string // holds the label while the expiry step is shown
+
+	// clipboard state for the result modal
+	clipboardPayload string // the raw value the user can copy (macaroon hex or pairing phrase)
+	copied           bool   // true after a successful copy, shown as feedback
 }
 
 // New creates the initial model.
@@ -191,11 +196,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.view = ViewAccountDetail
 		return m, nil
 
+	case msgCopied:
+		m.copied = true
+		return m, nil
+
 	case msgSessionCreated:
 		m.modal = ModalNone
 		m.modalInput = ""
+		m.copied = false
+		m.clipboardPayload = msg.session.PairingSecretMnemonic
 		m.modalResult = fmt.Sprintf(
-			"Session created!\n\nPairing phrase:\n%s\n\nCopy this and use it in your LNC-compatible wallet.",
+			"Session created!\n\nPairing phrase:\n%s\n\nUse this in your LNC-compatible wallet.",
 			msg.session.PairingSecretMnemonic,
 		)
 		m.modal = ModalMacaroonResult
@@ -205,6 +216,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case msgMacaroon:
 		m.modal = ModalNone
 		m.modalInput = ""
+		m.copied = false
+		m.clipboardPayload = msg.hex
 		m.modalResult = fmt.Sprintf(
 			"Macaroon (hex):\n\n%s\n\nStore this securely — it grants access to the account.",
 			msg.hex,
