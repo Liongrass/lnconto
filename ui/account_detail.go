@@ -266,7 +266,7 @@ func (m *Model) doUpdateExpiry(expiryUnix int64) tea.Cmd {
 	}
 }
 
-func (m *Model) doCreateSession(label string) tea.Cmd {
+func (m *Model) doCreateSession(label string, expiryUnix uint64) tea.Cmd {
 	acc := m.selectedAcc()
 	if acc == nil {
 		return nil
@@ -274,7 +274,7 @@ func (m *Model) doCreateSession(label string) tea.Cmd {
 	id := acc.Id
 	return func() tea.Msg {
 		ctx := context.Background()
-		session, err := m.client.CreateAccountSession(ctx, label, id, "", 0)
+		session, err := m.client.CreateAccountSession(ctx, label, id, "", expiryUnix)
 		if err != nil {
 			return msgError{err}
 		}

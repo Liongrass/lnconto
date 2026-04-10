@@ -13,7 +13,7 @@ import (
 
 func (m *Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.modal {
-	case ModalCredit, ModalDebit, ModalExpiry, ModalNewSession:
+	case ModalCredit, ModalDebit, ModalExpiry, ModalNewSession, ModalNewSessionExpiry:
 		return m.handleTextInputKey(msg)
 	case ModalMacaroonType:
 		return m.handleMacaroonTypeKey(msg)
@@ -113,9 +113,21 @@ func (m *Model) submitModal() (tea.Model, tea.Cmd) {
 		if label == "" {
 			label = "lnconto-session"
 		}
+		// Advance to the expiry step.
+		m.modalSessionLabel = label
+		m.modalInput = ""
+		m.modal = ModalNewSessionExpiry
+		return m, nil
+
+	case ModalNewSessionExpiry:
+		expiry, err := parseSessionExpiry(input)
+		if err != nil {
+			m.modalInput = ""
+			return m, nil
+		}
 		m.view = ViewLoading
 		m.loadingText = "Creating session..."
-		return m, m.doCreateSession(label)
+		return m, m.doCreateSession(m.modalSessionLabel, expiry)
 	}
 
 	return m, nil
@@ -133,6 +145,12 @@ func (m *Model) viewModal() string {
 		content = m.viewTextInputModal("Set Expiry", "Date (YYYY-MM-DD) or 0 for never:", "e.g. 2025-12-31")
 	case ModalNewSession:
 		content = m.viewTextInputModal("New LNC Session", "Session label:", "e.g. My Wallet")
+	case ModalNewSessionExpiry:
+		content = m.viewTextInputModal(
+			fmt.Sprintf(`Session expiry for "%s"`, m.modalSessionLabel),
+			"Duration (leave blank for 1 year):",
+			"30m  2h  7d  3mo  1y",
+		)
 	case ModalMacaroonType:
 		content = m.viewMacaroonTypeModal()
 	case ModalMacaroonResult:
@@ -217,4 +235,47 @@ func (m *Model) viewResultModal() string {
 		styleHelp.Render("any key to close"),
 	)
 	return styleModal.Width(innerW).Render(body)
+}
+
+// parseSessionExpiry converts a human-friendly duration string into a Unix
+// timestamp in the future.  Accepted suffixes: m (minutes), h (hours),
+// d (days), mo (months = 30 days), y (years = 365 days).  A bare integer is
+// treated as days.  An empty string defaults to 1 year.
+func parseSessionExpiry(s string) (uint64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return uint64(time.Now().Add(365 * 24 * time.Hour).Unix()), nil
+	}
+
+	// Split into numeric part and suffix.
+	i := 0
+	for i < len(s) && (s[i] >= '0' && s[i] <= '9') {
+		i++
+	}
+	if i == 0 {
+		return 0, fmt.Errorf("invalid expiry %q", s)
+	}
+	n, err := strconv.ParseUint(s[:i], 10, 64)
+	if err != nil || n == 0 {
+		return 0, fmt.Errorf("invalid expiry %q", s)
+	}
+	suffix := strings.ToLower(strings.TrimSpace(s[i:]))
+
+	var d time.Duration
+	switch suffix {
+	case "", "d", "day", "days":
+		d = time.Duration(n) * 24 * time.Hour
+	case "m", "min", "mins", "minute", "minutes":
+		d = time.Duration(n) * time.Minute
+	case "h", "hr", "hrs", "hour", "hours":
+		d = time.Duration(n) * time.Hour
+	case "mo", "mon", "month", "months":
+		d = time.Duration(n) * 30 * 24 * time.Hour
+	case "y", "yr", "year", "years":
+		d = time.Duration(n) * 365 * 24 * time.Hour
+	default:
+		return 0, fmt.Errorf("unknown unit %q (use m, h, d, mo, y)", suffix)
+	}
+
+	return uint64(time.Now().Add(d).Unix()), nil
 }

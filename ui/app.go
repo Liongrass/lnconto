@@ -32,6 +32,7 @@ const (
 	ModalDebit
 	ModalExpiry
 	ModalNewSession
+	ModalNewSessionExpiry
 	ModalMacaroonType
 	ModalMacaroonResult
 )
@@ -70,10 +71,11 @@ type Model struct {
 	paymentsScroll int
 
 	// modal state
-	modal       ModalKind
-	modalInput  string
-	modalResult string
-	modalTitle  string
+	modal             ModalKind
+	modalInput        string
+	modalResult       string
+	modalTitle        string
+	modalSessionLabel string // holds the label while the expiry step is shown
 }
 
 // New creates the initial model.
