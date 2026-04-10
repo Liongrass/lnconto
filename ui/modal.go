@@ -23,13 +23,13 @@ func (m *Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if msg.String() == "c" {
 			return m, copyToClipboard(m.clipboardPayload)
 		}
-		// Any other key closes the modal.
+		// Any other key closes the modal and restores mouse tracking.
 		m.modal = ModalNone
 		m.modalResult = ""
 		m.clipboardPayload = ""
 		m.copied = false
 		m.view = m.prevView
-		return m, nil
+		return m, func() tea.Msg { return tea.EnableMouseCellMotion() }
 	}
 	return m, nil
 }
@@ -240,7 +240,7 @@ func (m *Model) viewResultModal() string {
 	if m.copied {
 		copyLine = styleGreen.Render("✓ Copied to clipboard!")
 	} else {
-		copyLine = styleHelp.Render("c copy to clipboard")
+		copyLine = styleHelp.Render("select text to copy   c clipboard")
 	}
 
 	body := fmt.Sprintf("%s\n\n%s\n\n%s\n%s",

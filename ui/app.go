@@ -211,7 +211,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		)
 		m.modal = ModalMacaroonResult
 		m.view = ViewModal
-		return m, nil
+		return m, func() tea.Msg { return tea.DisableMouse() }
 
 	case msgMacaroon:
 		m.modal = ModalNone
@@ -224,7 +224,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		)
 		m.modal = ModalMacaroonResult
 		m.view = ViewModal
-		return m, nil
+		return m, func() tea.Msg { return tea.DisableMouse() }
 
 	case msgError:
 		m.err = msg.err
@@ -246,9 +246,13 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "q":
 		if m.view == ViewModal {
+			wasResult := m.modal == ModalMacaroonResult
 			m.modal = ModalNone
 			m.modalInput = ""
 			m.view = m.prevView
+			if wasResult {
+				return m, func() tea.Msg { return tea.EnableMouseCellMotion() }
+			}
 			return m, nil
 		}
 		if m.view == ViewAccountDetail || m.view == ViewSessions {
@@ -258,9 +262,13 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "esc":
 		if m.view == ViewModal {
+			wasResult := m.modal == ModalMacaroonResult
 			m.modal = ModalNone
 			m.modalInput = ""
 			m.view = m.prevView
+			if wasResult {
+				return m, func() tea.Msg { return tea.EnableMouseCellMotion() }
+			}
 			return m, nil
 		}
 		if m.view == ViewAccountDetail || m.view == ViewSessions || m.view == ViewError {
