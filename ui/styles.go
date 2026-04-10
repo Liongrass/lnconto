@@ -1,10 +1,6 @@
 package ui
 
-import (
-	"fmt"
-
-	"github.com/charmbracelet/lipgloss"
-)
+import "github.com/charmbracelet/lipgloss"
 
 var (
 	colorPrimary   = lipgloss.Color("#F7931A") // Bitcoin orange
@@ -13,7 +9,6 @@ var (
 	colorWarning   = lipgloss.Color("#F7CB45")
 	colorDanger    = lipgloss.Color("#E74C3C")
 	colorMuted     = lipgloss.Color("#4A4A4A")
-	colorBg        = lipgloss.Color("#1A1A1A")
 	colorBgAlt     = lipgloss.Color("#222222")
 	colorBorder    = lipgloss.Color("#333333")
 	colorSelected  = lipgloss.Color("#F7931A")
@@ -87,23 +82,8 @@ var (
 			Foreground(colorPrimary).
 			Bold(true)
 
-	stylePubkey = lipgloss.NewStyle().
-			Foreground(colorSecondary).
-			MaxWidth(16)
-
 	styleStatus = lipgloss.NewStyle().
 			Background(colorBgAlt).
 			Foreground(colorSecondary).
 			Padding(0, 2)
 )
-
-func formatSats(sats int64) string {
-	if sats < 0 {
-		return styleRed.Render(fmt.Sprintf("-%d sats", -sats))
-	}
-	s := fmt.Sprintf("%d sats", sats)
-	if sats > 1_000_000 {
-		return styleGreen.Render(s)
-	}
-	return styleValue.Render(s)
-}

@@ -10,6 +10,18 @@ import (
 	"github.com/lnconto/lnconto/client"
 )
 
+// paymentListOverhead: title(1) + blank(2) + info box(~7) + blank(1) +
+// payments header(1) + column header(1) + blank(1) + help(1) = 15
+const paymentListOverhead = 15
+
+func (m *Model) visiblePaymentRows() int {
+	rows := m.safeHeight() - paymentListOverhead
+	if rows < 3 {
+		rows = 3
+	}
+	return rows
+}
+
 func (m *Model) selectedAcc() *litrpc.Account {
 	if m.selectedAccount < 0 || m.selectedAccount >= len(m.accounts) {
 		return nil
@@ -19,6 +31,21 @@ func (m *Model) selectedAcc() *litrpc.Account {
 
 func (m *Model) handleAccountDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
+	case "up", "k":
+		if m.paymentsScroll > 0 {
+			m.paymentsScroll--
+		}
+	case "down", "j":
+		acc := m.selectedAcc()
+		if acc != nil {
+			maxScroll := len(acc.Payments) - m.visiblePaymentRows()
+			if maxScroll < 0 {
+				maxScroll = 0
+			}
+			if m.paymentsScroll < maxScroll {
+				m.paymentsScroll++
+			}
+		}
 	case "c":
 		m.modal = ModalCredit
 		m.modalTitle = "Credit Account"
@@ -58,11 +85,11 @@ func (m *Model) viewAccountDetail() string {
 		return "No account selected."
 	}
 
+	w := m.safeWidth()
 	var sb strings.Builder
 
-	// Header.
-	title := styleTitleBar.Width(m.width).Render("⚡ lnconto — Account Detail")
-	sb.WriteString(title + "\n\n")
+	// Title bar.
+	sb.WriteString(styleTitleBar.Width(w).Render("⚡ lnconto — Account Detail") + "\n\n")
 
 	// Account info box.
 	label := acc.Label
@@ -82,7 +109,7 @@ func (m *Model) viewAccountDetail() string {
 	infoContent := fmt.Sprintf(
 		"%s  %s\n\n%s %s\n%s %s\n%s %s\n%s %s",
 		styleHeader.Render(label),
-		styleMuted.Render(acc.Id),
+		styleMuted.Render(truncate(acc.Id, w-len(label)-10)),
 		styleLabel.Render("Current Balance:"),
 		formatBalanceStyled(acc.CurrentBalance),
 		styleLabel.Render("Initial Balance:"),
@@ -92,55 +119,96 @@ func (m *Model) viewAccountDetail() string {
 		styleLabel.Render("Payments:       "),
 		styleValue.Render(fmt.Sprintf("%d", len(acc.Payments))),
 	)
-	sb.WriteString(styleSection.Width(m.width-4).Render(infoContent) + "\n\n")
+	// Width(w-2): border adds 2 outside → total = w.
+	sb.WriteString(styleSection.Width(w-2).Render(infoContent) + "\n\n")
 
 	// Payments list.
 	if len(acc.Payments) > 0 {
 		sb.WriteString(styleHeader.Render("Recent Payments") + "\n")
-		hdr := fmt.Sprintf("  %-20s  %-15s  %s", "HASH", "STATE", "AMOUNT")
+		hw, sw, aw := m.paymentColWidths()
+		hdr := m.formatPaymentRow("HASH", "STATE", "AMOUNT", hw, sw, aw)
 		sb.WriteString(styleLabel.Render(hdr) + "\n")
 
-		max := len(acc.Payments)
-		if max > 15 {
-			max = 15
+		// Most-recent-first slice.
+		reversed := make([]*litrpc.AccountPayment, len(acc.Payments))
+		for i, p := range acc.Payments {
+			reversed[len(acc.Payments)-1-i] = p
 		}
-		// Show most recent first (last in slice).
-		for i := len(acc.Payments) - 1; i >= len(acc.Payments)-max; i-- {
-			p := acc.Payments[i]
+
+		visible := m.visiblePaymentRows()
+		end := m.paymentsScroll + visible
+		if end > len(reversed) {
+			end = len(reversed)
+		}
+		for _, p := range reversed[m.paymentsScroll:end] {
 			hashShort := fmt.Sprintf("%x", p.Hash)
-			if len(hashShort) > 20 {
-				hashShort = hashShort[:10] + "…"
+			if len(hashShort) > hw {
+				hashShort = hashShort[:hw-1] + "…"
 			}
-			stateStyle := styleValue
+			row := m.formatPaymentRow(hashShort, p.State, fmt.Sprintf("%d sats", p.FullAmount), hw, sw, aw)
+			stateStyle := styleNormal
 			if strings.Contains(p.State, "FAILED") {
 				stateStyle = styleRed
 			} else if strings.Contains(p.State, "SUCCEEDED") || strings.Contains(p.State, "SETTLED") {
 				stateStyle = styleGreen
 			}
-			row := fmt.Sprintf("  %-20s  %-15s  %d sats",
-				hashShort,
-				truncate(p.State, 15),
-				p.FullAmount,
-			)
 			sb.WriteString(stateStyle.Render(row) + "\n")
 		}
+
+		if len(acc.Payments) > visible {
+			sb.WriteString(styleMuted.Render(fmt.Sprintf(
+				"  %d–%d of %d  (↑/↓ to scroll)",
+				m.paymentsScroll+1, end, len(acc.Payments),
+			)) + "\n")
+		}
 	} else {
-		sb.WriteString(styleMuted.Padding(0, 2).Render("No payments.") + "\n")
+		sb.WriteString(styleMuted.Padding(0, 1).Render("No payments.") + "\n")
 	}
 
 	// Help bar.
-	helpItems := []string{
-		"c credit",
-		"d debit",
-		"e expiry",
-		"s new LNC session",
-		"m macaroon",
-		"esc back",
-	}
-	help := styleHelp.Render(strings.Join(helpItems, "   "))
-	sb.WriteString("\n" + styleStatus.Width(m.width).Render(help))
+	sb.WriteString("\n" + styleStatus.Width(w).Render(m.accountDetailHelp()))
 
 	return sb.String()
+}
+
+// paymentColWidths returns hash, state, amount column widths.
+// Row: hash + "  " + state + "  " + amount. Same 6-char overhead as account rows.
+func (m *Model) paymentColWidths() (hashW, stateW, amountW int) {
+	avail := m.safeWidth() - 6
+	if avail < 30 {
+		avail = 30
+	}
+	hashW = avail * 40 / 100
+	if hashW > 22 {
+		hashW = 22
+	}
+	stateW = avail * 35 / 100
+	if stateW > 18 {
+		stateW = 18
+	}
+	amountW = avail - hashW - stateW
+	if amountW < 8 {
+		amountW = 8
+	}
+	return
+}
+
+func (m *Model) formatPaymentRow(hash, state, amount string, hw, sw, aw int) string {
+	return fmt.Sprintf("%-*s  %-*s  %-*s",
+		hw, truncate(hash, hw),
+		sw, truncate(state, sw),
+		aw, truncate(amount, aw),
+	)
+}
+
+func (m *Model) accountDetailHelp() string {
+	if m.safeWidth() >= 68 {
+		return "c credit   d debit   e expiry   s LNC session   m macaroon   esc back"
+	}
+	if m.safeWidth() >= 50 {
+		return "c credit  d debit  e expiry  s session  m mac  esc"
+	}
+	return "c d e s m   esc back"
 }
 
 func formatBalanceStyled(sats int64) string {

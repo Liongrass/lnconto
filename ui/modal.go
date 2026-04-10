@@ -18,7 +18,7 @@ func (m *Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case ModalMacaroonType:
 		return m.handleMacaroonTypeKey(msg)
 	case ModalMacaroonResult:
-		// any key closes result modal
+		// any key closes the result
 		m.modal = ModalNone
 		m.modalResult = ""
 		m.view = m.prevView
@@ -38,7 +38,6 @@ func (m *Model) handleTextInputKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+u":
 		m.modalInput = ""
 	default:
-		// Only accept printable chars.
 		if len(msg.Runes) == 1 {
 			m.modalInput += string(msg.Runes)
 		}
@@ -96,7 +95,6 @@ func (m *Model) submitModal() (tea.Model, tea.Cmd) {
 		}
 		t, err := time.Parse("2006-01-02", input)
 		if err != nil {
-			// Try unix timestamp.
 			ts, err2 := strconv.ParseInt(input, 10, 64)
 			if err2 != nil {
 				m.modalInput = ""
@@ -142,19 +140,38 @@ func (m *Model) viewModal() string {
 	}
 
 	return lipgloss.NewStyle().
-		Width(m.width).
-		Height(m.height).
+		Width(m.safeWidth()).
+		Height(m.safeHeight()).
 		Align(lipgloss.Center, lipgloss.Center).
 		Render(content)
 }
 
+func (m *Model) modalInnerWidth() int {
+	// Modal box: border(2) + padding(6) = 8 overhead. Leave 4 margin each side.
+	w := m.safeWidth() - 16
+	if w < 30 {
+		w = 30
+	}
+	if w > 60 {
+		w = 60
+	}
+	return w
+}
+
 func (m *Model) viewTextInputModal(title, prompt, placeholder string) string {
+	innerW := m.modalInnerWidth()
+
 	inputDisplay := m.modalInput
 	if inputDisplay == "" {
 		inputDisplay = styleMuted.Render(placeholder)
 	}
 
-	inputBox := styleInput.Render(inputDisplay + "█")
+	inputBox := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorPrimary).
+		Padding(0, 1).
+		Width(innerW).
+		Render(inputDisplay + "█")
 
 	body := fmt.Sprintf(
 		"%s\n\n%s\n%s\n\n%s",
@@ -163,31 +180,41 @@ func (m *Model) viewTextInputModal(title, prompt, placeholder string) string {
 		inputBox,
 		styleHelp.Render("enter confirm   esc cancel   ctrl+u clear"),
 	)
-	return styleModal.Render(body)
+	return styleModal.Width(innerW).Render(body)
 }
 
 func (m *Model) viewMacaroonTypeModal() string {
+	innerW := m.modalInnerWidth()
 	body := fmt.Sprintf(
 		"%s\n\n%s\n%s\n%s\n\n%s",
 		styleHeader.Render("Generate Macaroon"),
-		styleValue.Render("1")+styleLabel.Render("  Account macaroon       (invoices + offchain r/w)"),
-		styleValue.Render("2")+styleLabel.Render("  Readonly macaroon      (invoices + offchain read)"),
-		styleValue.Render("3")+styleLabel.Render("  Invoice macaroon       (create/read invoices only)"),
-		styleHelp.Render("1-3 select type   esc cancel"),
+		styleValue.Render("1")+" "+styleLabel.Render("Account       (invoices + offchain r/w)"),
+		styleValue.Render("2")+" "+styleLabel.Render("Readonly      (invoices + offchain read)"),
+		styleValue.Render("3")+" "+styleLabel.Render("Invoice       (create/read invoices only)"),
+		styleHelp.Render("1-3 select   esc cancel"),
 	)
-	return styleModal.Render(body)
+	return styleModal.Width(innerW).Render(body)
 }
 
 func (m *Model) viewResultModal() string {
-	body := fmt.Sprintf(
-		"%s\n\n%s\n\n%s",
+	// Make the result modal wider since it may contain a long macaroon hex.
+	innerW := m.safeWidth() - 8
+	if innerW < 30 {
+		innerW = 30
+	}
+
+	// Wrap the result body to the inner content width.
+	// styleModal has Padding(1,3) → content width = innerW - 6.
+	contentW := innerW - 6
+	if contentW < 20 {
+		contentW = 20
+	}
+	wrapped := wrapText(m.modalResult, contentW)
+
+	body := fmt.Sprintf("%s\n\n%s\n\n%s",
 		styleHeader.Render("Result"),
-		styleValue.Render(m.modalResult),
+		styleValue.Render(wrapped),
 		styleHelp.Render("any key to close"),
 	)
-	maxW := m.width - 10
-	if maxW < 40 {
-		maxW = 40
-	}
-	return styleModal.Width(maxW).Render(body)
+	return styleModal.Width(innerW).Render(body)
 }

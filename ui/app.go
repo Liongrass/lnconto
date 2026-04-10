@@ -64,14 +64,16 @@ type Model struct {
 	selectedAccount int
 	selectedSession int
 
+	// scroll offsets for each list view
+	accountsScroll int
+	sessionsScroll int
+	paymentsScroll int
+
 	// modal state
 	modal       ModalKind
 	modalInput  string
 	modalResult string
 	modalTitle  string
-
-	// input cursor position for modal
-	inputCursor int
 }
 
 // New creates the initial model.
@@ -85,6 +87,36 @@ func New(c *client.Client) *Model {
 
 func (m *Model) Init() tea.Cmd {
 	return m.fetchAll()
+}
+
+// safeWidth returns the terminal width with a sensible fallback.
+func (m *Model) safeWidth() int {
+	if m.width <= 0 {
+		return 80
+	}
+	return m.width
+}
+
+// safeHeight returns the terminal height with a sensible fallback.
+func (m *Model) safeHeight() int {
+	if m.height <= 0 {
+		return 24
+	}
+	return m.height
+}
+
+// clampScroll adjusts scroll so that selected is always within the visible window.
+func clampScroll(scroll, selected, visible int) int {
+	if visible <= 0 {
+		visible = 1
+	}
+	if selected < scroll {
+		return selected
+	}
+	if selected >= scroll+visible {
+		return selected - visible + 1
+	}
+	return scroll
 }
 
 func (m *Model) fetchAll() tea.Cmd {
@@ -139,22 +171,21 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case msgSessionList:
 		m.sessions = msg.sessions
+		m.sessionsScroll = 0
+		m.selectedSession = 0
 		m.view = ViewSessions
 		return m, nil
 
 	case msgAccountUpdated:
-		// Update the account in our list.
 		for i, a := range m.accounts {
 			if a.Id == msg.account.Id {
 				m.accounts[i] = msg.account
 				break
 			}
 		}
-		if m.selectedAccount < len(m.accounts) {
-			m.accounts[m.selectedAccount] = msg.account
-		}
 		m.modal = ModalNone
 		m.modalInput = ""
+		m.paymentsScroll = 0
 		m.view = ViewAccountDetail
 		return m, nil
 
@@ -197,7 +228,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Global keys.
 	switch msg.String() {
 	case "ctrl+c", "q":
 		if m.view == ViewModal {
@@ -264,12 +294,11 @@ func (m *Model) View() string {
 }
 
 func (m *Model) viewLoading() string {
-	content := lipgloss.NewStyle().
-		Width(m.width).
-		Height(m.height).
+	return lipgloss.NewStyle().
+		Width(m.safeWidth()).
+		Height(m.safeHeight()).
 		Align(lipgloss.Center, lipgloss.Center).
 		Render("⚡ " + m.loadingText)
-	return content
 }
 
 func (m *Model) viewError() string {
@@ -277,13 +306,19 @@ func (m *Model) viewError() string {
 	if m.err != nil {
 		errMsg = m.err.Error()
 	}
-	box := styleModal.Render(
+	// Wrap long error messages to terminal width.
+	innerW := m.safeWidth() - 10
+	if innerW < 30 {
+		innerW = 30
+	}
+	box := styleModal.Width(innerW).Render(
 		styleHeader.Render("Connection Error") + "\n\n" +
 			styleRed.Render(errMsg) + "\n\n" +
-			styleHelp.Render("r - retry   q - quit"),
+			styleHelp.Render("r retry   q quit"),
 	)
 	return lipgloss.NewStyle().
-		Width(m.width).Height(m.height).
+		Width(m.safeWidth()).
+		Height(m.safeHeight()).
 		Align(lipgloss.Center, lipgloss.Center).
 		Render(box)
 }

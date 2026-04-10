@@ -6,23 +6,38 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/lightninglabs/lightning-terminal/litrpc"
 )
+
+// accountListOverhead is the number of lines taken up by everything outside the
+// scrollable account rows on the dashboard (title, node panel, section header,
+// column header, blank line, help bar).
+const accountListOverhead = 11
+
+func (m *Model) visibleAccountRows() int {
+	rows := m.safeHeight() - accountListOverhead
+	if rows < 3 {
+		rows = 3
+	}
+	return rows
+}
 
 func (m *Model) handleDashboardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "up", "k":
 		if m.selectedAccount > 0 {
 			m.selectedAccount--
+			m.accountsScroll = clampScroll(m.accountsScroll, m.selectedAccount, m.visibleAccountRows())
 		}
 	case "down", "j":
 		if m.selectedAccount < len(m.accounts)-1 {
 			m.selectedAccount++
+			m.accountsScroll = clampScroll(m.accountsScroll, m.selectedAccount, m.visibleAccountRows())
 		}
 	case "enter", " ":
 		if len(m.accounts) > 0 {
 			m.prevView = ViewDashboard
+			m.paymentsScroll = 0
 			m.view = ViewAccountDetail
 		}
 	case "S", "s":
@@ -38,86 +53,161 @@ func (m *Model) handleDashboardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) viewDashboard() string {
+	w := m.safeWidth()
 	var sb strings.Builder
 
-	// Title bar.
-	title := styleTitleBar.Width(m.width).Render("⚡ lnconto — Lightning Terminal Manager")
-	sb.WriteString(title + "\n")
+	// Title bar — full width.
+	sb.WriteString(styleTitleBar.Width(w).Render("⚡ lnconto — Lightning Terminal Manager") + "\n")
 
 	// Node info panel.
 	if m.nodeInfo != nil {
-		ni := m.nodeInfo
-		syncMark := styleGreen.Render("✓ synced")
-		if !ni.SyncedToChain {
-			syncMark = styleWarning.Render("⚠ syncing")
-		}
-
-		pubkeyShort := ni.Pubkey
-		if len(pubkeyShort) > 20 {
-			pubkeyShort = pubkeyShort[:10] + "…" + pubkeyShort[len(pubkeyShort)-10:]
-		}
-
-		infoLines := []string{
-			fmt.Sprintf("%s  %s  %s",
-				styleHeader.Render(ni.Alias),
-				styleMuted.Render(pubkeyShort),
-				syncMark,
-			),
-			fmt.Sprintf("%s %s   %s %s   %s %s active channels",
-				styleLabel.Render("on-chain:"),
-				styleGreen.Render(fmt.Sprintf("%d sats", ni.OnchainBalance)),
-				styleLabel.Render("off-chain:"),
-				styleGreen.Render(fmt.Sprintf("%d sats", ni.OffchainBalance)),
-				styleLabel.Render("channels:"),
-				styleValue.Render(fmt.Sprintf("%d", ni.NumActiveChannels)),
-			),
-		}
-		if ni.NumPendingChannels > 0 || ni.NumInactiveChannels > 0 {
-			infoLines = append(infoLines,
-				fmt.Sprintf("%s %d   %s %d   %s %d",
-					styleLabel.Render("block:"), ni.BlockHeight,
-					styleLabel.Render("pending:"), ni.NumPendingChannels,
-					styleLabel.Render("inactive:"), ni.NumInactiveChannels,
-				),
-			)
-		}
-		panel := styleNodeInfo.Width(m.width - 4).Render(strings.Join(infoLines, "\n"))
-		sb.WriteString(panel + "\n")
+		sb.WriteString(m.renderNodeInfo() + "\n")
 	}
 
-	// Accounts list.
+	// Accounts section header.
 	sb.WriteString(styleHeader.Render(fmt.Sprintf("Accounts (%d)", len(m.accounts))) + "\n")
 
 	if len(m.accounts) == 0 {
-		sb.WriteString(styleMuted.Padding(0, 2).Render("No accounts found.") + "\n")
+		sb.WriteString(styleMuted.Padding(0, 1).Render("No accounts found.") + "\n")
 	} else {
-		// Table header.
-		hdr := renderAccountRow("LABEL / ID", "BALANCE", "EXPIRES", false)
+		// Column header row.
+		lw, bw, ew := m.accountColWidths()
+		hdr := m.formatAccountRow("LABEL / ID", "BALANCE", "EXPIRES", lw, bw, ew)
 		sb.WriteString(styleLabel.Render(hdr) + "\n")
 
-		for i, acc := range m.accounts {
-			selected := i == m.selectedAccount
-			sb.WriteString(renderAccountRow(accountLabel(acc), formatBalance(acc.CurrentBalance), formatExpiry(acc.ExpirationDate), selected) + "\n")
+		// Visible slice.
+		visible := m.visibleAccountRows()
+		end := m.accountsScroll + visible
+		if end > len(m.accounts) {
+			end = len(m.accounts)
+		}
+		for i := m.accountsScroll; i < end; i++ {
+			acc := m.accounts[i]
+			row := m.formatAccountRow(accountLabel(acc), formatBalance(acc.CurrentBalance), formatExpiry(acc.ExpirationDate), lw, bw, ew)
+			if i == m.selectedAccount {
+				sb.WriteString(styleSelected.Width(w).Render(row) + "\n")
+			} else {
+				sb.WriteString(styleNormal.Render(row) + "\n")
+			}
+		}
+
+		// Scroll indicator when list is longer than the viewport.
+		if len(m.accounts) > visible {
+			sb.WriteString(styleMuted.Render(fmt.Sprintf(
+				"  %d–%d of %d  (↑/↓ to scroll)",
+				m.accountsScroll+1, end, len(m.accounts),
+			)) + "\n")
 		}
 	}
 
-	// Help bar.
-	help := styleHelp.Render("↑/↓ navigate   enter select   S sessions   r refresh   q quit")
-	sb.WriteString("\n" + styleStatus.Width(m.width).Render(help))
+	// Help bar — pinned to bottom.
+	sb.WriteString("\n" + styleStatus.Width(w).Render(m.dashboardHelp()))
 
 	return sb.String()
 }
 
-func renderAccountRow(label, balance, expiry string, selected bool) string {
-	labelCol := fmt.Sprintf("%-30s", truncate(label, 30))
-	balanceCol := fmt.Sprintf("%-20s", truncate(balance, 20))
-	expiryCol := truncate(expiry, 20)
-	row := fmt.Sprintf("  %s  %s  %s", labelCol, balanceCol, expiryCol)
-	if selected {
-		return styleSelected.Render(row)
+// renderNodeInfo builds the node summary panel, stacking fields when narrow.
+func (m *Model) renderNodeInfo() string {
+	w := m.safeWidth()
+	ni := m.nodeInfo
+
+	syncMark := styleGreen.Render("✓ synced")
+	if !ni.SyncedToChain {
+		syncMark = styleWarning.Render("⚠ syncing")
 	}
-	return styleNormal.Render(row)
+
+	pubkeyShort := ni.Pubkey
+	if len(pubkeyShort) > 20 {
+		pubkeyShort = pubkeyShort[:10] + "…" + pubkeyShort[len(pubkeyShort)-10:]
+	}
+
+	line1 := fmt.Sprintf("%s  %s  %s",
+		styleHeader.Render(ni.Alias),
+		styleMuted.Render(pubkeyShort),
+		syncMark,
+	)
+
+	onchain := styleGreen.Render(fmt.Sprintf("%d sats", ni.OnchainBalance))
+	offchain := styleGreen.Render(fmt.Sprintf("%d sats", ni.OffchainBalance))
+	channels := styleValue.Render(fmt.Sprintf("%d", ni.NumActiveChannels))
+
+	var line2 string
+	// On narrow terminals, split balance and channel info across two lines.
+	if w < 80 {
+		line2 = fmt.Sprintf("%s %s   %s %s\n%s %s active",
+			styleLabel.Render("on-chain:"), onchain,
+			styleLabel.Render("off-chain:"), offchain,
+			styleLabel.Render("channels:"), channels,
+		)
+	} else {
+		line2 = fmt.Sprintf("%s %s   %s %s   %s %s active",
+			styleLabel.Render("on-chain:"), onchain,
+			styleLabel.Render("off-chain:"), offchain,
+			styleLabel.Render("channels:"), channels,
+		)
+	}
+
+	lines := []string{line1, line2}
+	if ni.NumPendingChannels > 0 || ni.NumInactiveChannels > 0 {
+		lines = append(lines, fmt.Sprintf("%s %d   %s %d   %s %d",
+			styleLabel.Render("block:"), ni.BlockHeight,
+			styleLabel.Render("pending:"), ni.NumPendingChannels,
+			styleLabel.Render("inactive:"), ni.NumInactiveChannels,
+		))
+	}
+
+	// Width(w-2): border adds 2 outside → total = w.
+	return styleNodeInfo.Width(w - 2).Render(strings.Join(lines, "\n"))
 }
+
+// accountColWidths returns the three column widths for the accounts table.
+// Row structure: label + "  " + balance + "  " + expiry.
+// The styleNormal/styleSelected have Padding(0,1), so the row content sits
+// inside a 1-char pad on each side → available content = w - 2.
+// We subtract 4 more for the two "  " separators: avail = w - 6.
+func (m *Model) accountColWidths() (labelW, balanceW, expiryW int) {
+	avail := m.safeWidth() - 6
+	if avail < 24 {
+		avail = 24
+	}
+	// Proportional split, capped to avoid excess whitespace on wide terminals.
+	labelW = avail * 45 / 100
+	if labelW > 35 {
+		labelW = 35
+	}
+	balanceW = avail * 30 / 100
+	if balanceW > 18 {
+		balanceW = 18
+	}
+	expiryW = avail - labelW - balanceW
+	if expiryW > 12 {
+		expiryW = 12
+	}
+	if expiryW < 6 {
+		expiryW = 6
+	}
+	return
+}
+
+func (m *Model) formatAccountRow(label, balance, expiry string, lw, bw, ew int) string {
+	return fmt.Sprintf("%-*s  %-*s  %-*s",
+		lw, truncate(label, lw),
+		bw, truncate(balance, bw),
+		ew, truncate(expiry, ew),
+	)
+}
+
+func (m *Model) dashboardHelp() string {
+	if m.safeWidth() >= 72 {
+		return "↑/↓ navigate   enter select   S sessions   r refresh   q quit"
+	}
+	if m.safeWidth() >= 50 {
+		return "↑/↓   enter select   S sessions   r   q"
+	}
+	return "↑/↓ enter  S sess  r  q"
+}
+
+// ── helpers used across views ──────────────────────────────────────────────
 
 func accountLabel(acc *litrpc.Account) string {
 	if acc.Label != "" {
@@ -157,12 +247,35 @@ func formatExpiry(ts int64) string {
 }
 
 func truncate(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
 	if len(s) <= max {
 		return s
+	}
+	if max <= 1 {
+		return s[:max]
 	}
 	return s[:max-1] + "…"
 }
 
-func center(s string, width int) string {
-	return lipgloss.NewStyle().Width(width).Align(lipgloss.Center).Render(s)
+// wrapText splits s into lines of at most width runes.
+func wrapText(s string, width int) string {
+	if width <= 0 {
+		return s
+	}
+	runes := []rune(s)
+	var out strings.Builder
+	for len(runes) > 0 {
+		n := width
+		if n > len(runes) {
+			n = len(runes)
+		}
+		out.WriteString(string(runes[:n]))
+		runes = runes[n:]
+		if len(runes) > 0 {
+			out.WriteByte('\n')
+		}
+	}
+	return out.String()
 }

@@ -5,18 +5,33 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/lightninglabs/lightning-terminal/litrpc"
 )
+
+// sessionListOverhead: title(1) + blank(1) + header(1) + col header(1) +
+// blank(1) + help(1) = 6
+const sessionListOverhead = 6
+
+func (m *Model) visibleSessionRows() int {
+	rows := m.safeHeight() - sessionListOverhead
+	if rows < 3 {
+		rows = 3
+	}
+	return rows
+}
 
 func (m *Model) handleSessionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "up", "k":
 		if m.selectedSession > 0 {
 			m.selectedSession--
+			m.sessionsScroll = clampScroll(m.sessionsScroll, m.selectedSession, m.visibleSessionRows())
 		}
 	case "down", "j":
 		if m.selectedSession < len(m.sessions)-1 {
 			m.selectedSession++
+			m.sessionsScroll = clampScroll(m.sessionsScroll, m.selectedSession, m.visibleSessionRows())
 		}
 	case "r":
 		m.view = ViewLoading
@@ -27,52 +42,107 @@ func (m *Model) handleSessionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) viewSessions() string {
+	w := m.safeWidth()
 	var sb strings.Builder
 
-	title := styleTitleBar.Width(m.width).Render("⚡ lnconto — Sessions")
-	sb.WriteString(title + "\n\n")
-
+	sb.WriteString(styleTitleBar.Width(w).Render("⚡ lnconto — Sessions") + "\n\n")
 	sb.WriteString(styleHeader.Render(fmt.Sprintf("Sessions (%d)", len(m.sessions))) + "\n")
 
 	if len(m.sessions) == 0 {
-		sb.WriteString(styleMuted.Padding(0, 2).Render("No sessions found.") + "\n")
+		sb.WriteString(styleMuted.Padding(0, 1).Render("No sessions found.") + "\n")
 	} else {
-		hdr := fmt.Sprintf("  %-25s  %-22s  %-12s  %s", "LABEL", "TYPE", "STATE", "EXPIRES")
+		lw, tw, sw, ew := m.sessionColWidths()
+		hdr := m.formatSessionRow("LABEL", "TYPE", "STATE", "EXPIRES", lw, tw, sw, ew)
 		sb.WriteString(styleLabel.Render(hdr) + "\n")
 
-		for i, s := range m.sessions {
-			selected := i == m.selectedSession
-			row := renderSessionRow(s, selected)
-			sb.WriteString(row + "\n")
+		visible := m.visibleSessionRows()
+		end := m.sessionsScroll + visible
+		if end > len(m.sessions) {
+			end = len(m.sessions)
+		}
+		for i := m.sessionsScroll; i < end; i++ {
+			s := m.sessions[i]
+			row := m.formatSessionRow(
+				s.Label,
+				sessionTypeName(s.SessionType),
+				sessionStateName(s.SessionState),
+				formatExpiry(int64(s.ExpiryTimestampSeconds)),
+				lw, tw, sw, ew,
+			)
+			if i == m.selectedSession {
+				sb.WriteString(styleSelected.Width(w).Render(row) + "\n")
+			} else {
+				rowStyle := m.sessionRowStyle(s.SessionState)
+				sb.WriteString(rowStyle.Render(row) + "\n")
+			}
+		}
+
+		if len(m.sessions) > visible {
+			sb.WriteString(styleMuted.Render(fmt.Sprintf(
+				"  %d–%d of %d  (↑/↓ to scroll)",
+				m.sessionsScroll+1, end, len(m.sessions),
+			)) + "\n")
 		}
 	}
 
-	help := styleHelp.Render("↑/↓ navigate   r refresh   esc back   q quit")
-	sb.WriteString("\n" + styleStatus.Width(m.width).Render(help))
-
+	sb.WriteString("\n" + styleStatus.Width(w).Render(m.sessionsHelp()))
 	return sb.String()
 }
 
-func renderSessionRow(s *litrpc.Session, selected bool) string {
-	label := truncate(s.Label, 25)
-	typeName := sessionTypeName(s.SessionType)
-	stateName := sessionStateName(s.SessionState)
-	expiry := formatExpiry(int64(s.ExpiryTimestampSeconds))
+// sessionColWidths returns label, type, state, expiry column widths.
+// Row: label + "  " + type + "  " + state + "  " + expiry → 3 separators = 6 overhead.
+func (m *Model) sessionColWidths() (labelW, typeW, stateW, expiryW int) {
+	avail := m.safeWidth() - 8 // 3 × "  " separators + 2 style padding
+	if avail < 36 {
+		avail = 36
+	}
+	labelW = avail * 32 / 100
+	if labelW > 28 {
+		labelW = 28
+	}
+	typeW = avail * 22 / 100
+	if typeW > 12 {
+		typeW = 12
+	}
+	stateW = avail * 20 / 100
+	if stateW > 10 {
+		stateW = 10
+	}
+	expiryW = avail - labelW - typeW - stateW
+	if expiryW > 12 {
+		expiryW = 12
+	}
+	if expiryW < 6 {
+		expiryW = 6
+	}
+	return
+}
 
-	row := fmt.Sprintf("  %-25s  %-22s  %-12s  %s", label, typeName, stateName, expiry)
+func (m *Model) formatSessionRow(label, typ, state, expiry string, lw, tw, sw, ew int) string {
+	return fmt.Sprintf("%-*s  %-*s  %-*s  %-*s",
+		lw, truncate(label, lw),
+		tw, truncate(typ, tw),
+		sw, truncate(state, sw),
+		ew, truncate(expiry, ew),
+	)
+}
 
-	var stateStyle = styleNormal
-	switch s.SessionState {
+func (m *Model) sessionRowStyle(state litrpc.SessionState) lipgloss.Style {
+	switch state {
 	case litrpc.SessionState_STATE_IN_USE:
-		stateStyle = styleGreen
+		return styleGreen
 	case litrpc.SessionState_STATE_REVOKED, litrpc.SessionState_STATE_EXPIRED:
-		stateStyle = styleMuted
+		return styleMuted
+	default:
+		return styleNormal
 	}
+}
 
-	if selected {
-		return styleSelected.Render(row)
+func (m *Model) sessionsHelp() string {
+	if m.safeWidth() >= 50 {
+		return "↑/↓ navigate   r refresh   esc back   q quit"
 	}
-	return stateStyle.Render(row)
+	return "↑/↓   r   esc   q"
 }
 
 func sessionTypeName(t litrpc.SessionType) string {
