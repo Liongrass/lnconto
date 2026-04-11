@@ -167,8 +167,11 @@ func (m *Model) submitModal() (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case ModalNewAccountBalance:
+		if input == "" {
+			return m, nil
+		}
 		amount, err := strconv.ParseUint(input, 10, 64)
-		if err != nil || amount == 0 {
+		if err != nil {
 			m.modalInput = ""
 			return m, nil
 		}
@@ -216,7 +219,7 @@ func (m *Model) viewModal() string {
 		if m.modalAccountLabel != "" {
 			title = fmt.Sprintf(`New Account "%s"`, m.modalAccountLabel)
 		}
-		content = m.viewTextInputModal(title, "Initial balance (satoshis):", "e.g. 100000")
+		content = m.viewTextInputModal(title, "Initial balance (satoshis):", "e.g. 100000  (0 for empty)")
 	case ModalNewAccountExpiry:
 		content = m.viewTextInputModal(
 			"New Account — Expiry",
