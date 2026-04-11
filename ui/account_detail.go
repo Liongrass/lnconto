@@ -112,8 +112,15 @@ func (m *Model) viewAccountDetail() string {
 		}
 	}
 
+	sent, received := paymentTotals(m.enrichedPayments)
+	sentStr, receivedStr := "—", "—"
+	if !m.paymentsLoading {
+		sentStr = fmt.Sprintf("%d sats", sent)
+		receivedStr = fmt.Sprintf("%d sats", received)
+	}
+
 	infoContent := fmt.Sprintf(
-		"%s  %s\n\n%s %s\n%s %s\n%s %s\n%s %s",
+		"%s  %s\n\n%s %s\n%s %s\n%s %s\n%s %s\n%s %s\n%s %s",
 		styleHeader.Render(label),
 		styleMuted.Render(truncate(acc.Id, w-len(label)-10)),
 		styleLabel.Render("Current Balance:"),
@@ -124,6 +131,10 @@ func (m *Model) viewAccountDetail() string {
 		expiryStyle.Render(expiryStr),
 		styleLabel.Render("Payments:       "),
 		styleValue.Render(fmt.Sprintf("%d", len(acc.Payments))),
+		styleLabel.Render("Total Sent:     "),
+		styleRed.Render(sentStr),
+		styleLabel.Render("Total Received: "),
+		styleGreen.Render(receivedStr),
 	)
 	// Width(w-2): border adds 2 outside → total = w.
 	sb.WriteString(styleSection.Width(w-2).Render(infoContent) + "\n\n")
@@ -297,6 +308,27 @@ func paymentRowStyle(pi *client.PaymentInfo) lipgloss.Style {
 // formatPaymentTimeSec formats a unix-second timestamp for the payment list.
 func formatPaymentTimeSec(sec int64) string {
 	return formatPaymentTime(sec * 1_000_000_000)
+}
+
+// paymentTotals returns the total sats sent (succeeded outgoing payments) and
+// received (settled incoming invoices), ignoring everything else.
+func paymentTotals(payments []*client.PaymentInfo) (sent, received int64) {
+	for _, pi := range payments {
+		if pi.IsIncoming() {
+			if pi.Invoice.State == lnrpc.Invoice_SETTLED {
+				amt := pi.Invoice.AmtPaidSat
+				if amt == 0 {
+					amt = pi.Invoice.Value
+				}
+				received += amt
+			}
+		} else {
+			if pi.Payment.Status == lnrpc.Payment_SUCCEEDED {
+				sent += pi.Payment.ValueSat
+			}
+		}
+	}
+	return
 }
 
 func formatPaymentTime(nsec int64) string {
