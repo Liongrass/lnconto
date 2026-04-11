@@ -72,6 +72,14 @@ func (m *Model) handleSessionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.sessionsScroll = clampScroll(m.sessionsScroll, m.selectedSession, m.visibleSessionRows())
+	case "n":
+		m.modalGeneralSessionType = 0
+		m.modalSessionLabel = ""
+		m.modalGeneralSessionPerms = ""
+		m.modalInput = ""
+		m.modal = ModalNewGeneralSessionType
+		m.prevView = ViewSessions
+		m.view = ViewModal
 	case "r":
 		m.view = ViewLoading
 		m.loadingText = "Refreshing sessions..."
@@ -188,13 +196,13 @@ func (m *Model) sessionRowStyle(state litrpc.SessionState) lipgloss.Style {
 }
 
 func (m *Model) sessionsHelp() string {
-	if m.safeWidth() >= 62 {
-		return "↑/↓ navigate   enter select   h hide inactive   r refresh   esc back"
+	if m.safeWidth() >= 72 {
+		return "↑/↓ navigate   enter select   n new   h hide inactive   r refresh   esc back"
 	}
-	if m.safeWidth() >= 46 {
-		return "↑/↓   enter   h hide   r refresh   esc back"
+	if m.safeWidth() >= 52 {
+		return "↑/↓   enter   n new   h hide   r refresh   esc back"
 	}
-	return "↑/↓ enter  h  r  esc"
+	return "↑/↓ enter  n  h  r  esc"
 }
 
 func sessionTypeName(t litrpc.SessionType) string {

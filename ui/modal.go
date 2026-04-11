@@ -18,8 +18,11 @@ func (m *Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.modal {
 	case ModalCredit, ModalDebit, ModalExpiry, ModalNewSession, ModalNewSessionExpiry,
 		ModalNewAccountLabel, ModalNewAccountBalance, ModalNewAccountExpiry,
-		ModalSaveMacaroon:
+		ModalSaveMacaroon,
+		ModalNewGeneralSessionPerms, ModalNewGeneralSessionLabel, ModalNewGeneralSessionExpiry:
 		return m.handleTextInputKey(msg)
+	case ModalNewGeneralSessionType:
+		return m.handleGeneralSessionTypeKey(msg)
 	case ModalConfirmRemove:
 		return m.handleConfirmRemoveKey(msg)
 	case ModalSessionDetail:
@@ -121,6 +124,28 @@ func (m *Model) handleConfirmRemoveKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Any other key cancels.
 	m.modal = ModalNone
 	m.view = m.prevView
+	return m, nil
+}
+
+func (m *Model) handleGeneralSessionTypeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "1":
+		m.modalGeneralSessionType = 0 // admin
+		m.modalInput = ""
+		m.modal = ModalNewGeneralSessionLabel
+	case "2":
+		m.modalGeneralSessionType = 1 // readonly
+		m.modalInput = ""
+		m.modal = ModalNewGeneralSessionLabel
+	case "3":
+		m.modalGeneralSessionType = 2 // invoice
+		m.modalInput = ""
+		m.modal = ModalNewGeneralSessionLabel
+	case "4":
+		m.modalGeneralSessionType = 3 // custom
+		m.modalInput = ""
+		m.modal = ModalNewGeneralSessionPerms
+	}
 	return m, nil
 }
 
@@ -247,9 +272,66 @@ func (m *Model) submitModal() (tea.Model, tea.Cmd) {
 		m.modal = ModalMacaroonResult
 		m.modalInput = ""
 		return m, doSaveMacaroon(hex, input)
+
+	case ModalNewGeneralSessionPerms:
+		// Validate permissions before advancing.
+		if _, err := client.ParsePermissions(input); err != nil {
+			m.modalInput = ""
+			return m, nil
+		}
+		m.modalGeneralSessionPerms = input
+		m.modalInput = ""
+		m.modal = ModalNewGeneralSessionLabel
+		return m, nil
+
+	case ModalNewGeneralSessionLabel:
+		label := input
+		if label == "" {
+			label = "lnconto-session"
+		}
+		m.modalSessionLabel = label
+		m.modalInput = ""
+		m.modal = ModalNewGeneralSessionExpiry
+		return m, nil
+
+	case ModalNewGeneralSessionExpiry:
+		expiry, err := parseSessionExpiry(input)
+		if err != nil {
+			m.modalInput = ""
+			return m, nil
+		}
+		return m.submitGeneralSession(expiry)
 	}
 
 	return m, nil
+}
+
+func (m *Model) submitGeneralSession(expiryUnix uint64) (tea.Model, tea.Cmd) {
+	var sessionType litrpc.SessionType
+	var customPerms []*litrpc.MacaroonPermission
+
+	switch m.modalGeneralSessionType {
+	case 0:
+		sessionType = litrpc.SessionType_TYPE_MACAROON_ADMIN
+	case 1:
+		sessionType = litrpc.SessionType_TYPE_MACAROON_READONLY
+	case 2:
+		sessionType = litrpc.SessionType_TYPE_MACAROON_CUSTOM
+		customPerms = client.InvoiceSessionPermissions
+	case 3:
+		sessionType = litrpc.SessionType_TYPE_MACAROON_CUSTOM
+		perms, err := client.ParsePermissions(m.modalGeneralSessionPerms)
+		if err != nil {
+			m.modal = ModalNone
+			m.view = m.prevView
+			return m, nil
+		}
+		customPerms = perms
+	}
+
+	m.view = ViewLoading
+	m.loadingText = "Creating session..."
+	return m, m.doCreateGeneralSession(sessionType, customPerms, m.modalSessionLabel, expiryUnix)
 }
 
 func (m *Model) viewModal() string {
@@ -286,6 +368,22 @@ func (m *Model) viewModal() string {
 		)
 	case ModalSaveMacaroon:
 		content = m.viewTextInputModal("Save Macaroon", "File path:", "~/wallet.macaroon")
+	case ModalNewGeneralSessionType:
+		content = m.viewGeneralSessionTypeModal()
+	case ModalNewGeneralSessionPerms:
+		content = m.viewTextInputModal(
+			"New Session — Custom Permissions",
+			"Permissions (entity:action, comma-separated):",
+			"offchain:read,invoices:write",
+		)
+	case ModalNewGeneralSessionLabel:
+		content = m.viewTextInputModal("New Session — Label", "Session label (optional):", "e.g. My Wallet")
+	case ModalNewGeneralSessionExpiry:
+		content = m.viewTextInputModal(
+			fmt.Sprintf(`New Session — Expiry`),
+			"Duration (leave blank for 1 year):",
+			"30m  2h  7d  3mo  1y",
+		)
 	case ModalConfirmRemove:
 		content = m.viewConfirmRemoveModal()
 	case ModalSessionDetail:
@@ -347,6 +445,20 @@ func (m *Model) viewTextInputModal(title, prompt, placeholder string) string {
 		styleLabel.Render(prompt),
 		inputBox,
 		styleHelp.Render("enter confirm   esc cancel   ctrl+u clear"),
+	)
+	return styleModal.Width(innerW).Render(body)
+}
+
+func (m *Model) viewGeneralSessionTypeModal() string {
+	innerW := m.modalInnerWidth()
+	body := fmt.Sprintf(
+		"%s\n\n%s\n%s\n%s\n%s\n\n%s",
+		styleHeader.Render("New Session"),
+		styleValue.Render("1")+" "+styleLabel.Render("Admin         (full access)"),
+		styleValue.Render("2")+" "+styleLabel.Render("Readonly      (read-only access)"),
+		styleValue.Render("3")+" "+styleLabel.Render("Invoice       (address + invoices + onchain read)"),
+		styleValue.Render("4")+" "+styleLabel.Render("Custom        (enter permissions manually)"),
+		styleHelp.Render("1-4 select   esc cancel"),
 	)
 	return styleModal.Width(innerW).Render(body)
 }

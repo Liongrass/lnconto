@@ -46,6 +46,10 @@ const (
 	ModalConfirmRemove
 	ModalSessionDetail
 	ModalSaveMacaroon
+	ModalNewGeneralSessionType
+	ModalNewGeneralSessionPerms
+	ModalNewGeneralSessionLabel
+	ModalNewGeneralSessionExpiry
 )
 
 // msgs for async operations
@@ -94,9 +98,13 @@ type Model struct {
 
 	// modal state
 	modal             ModalKind
-	modalInput  string
-	modalTitle  string
+	modalInput        string
+	modalTitle        string
 	modalSessionLabel string // holds the label while the expiry step is shown
+
+	// general session creation state (Sessions view → new session flow)
+	modalGeneralSessionType  int    // 0=admin 1=readonly 2=invoice 3=custom
+	modalGeneralSessionPerms string // stored custom permissions string
 
 	// new-account multi-step state
 	modalAccountLabel   string // label collected in step 1
@@ -454,6 +462,17 @@ func doSaveMacaroon(hexStr, path string) tea.Cmd {
 			return msgError{fmt.Errorf("saving macaroon: %w", err)}
 		}
 		return msgMacaroonSaved{path}
+	}
+}
+
+func (m *Model) doCreateGeneralSession(sessionType litrpc.SessionType, customPerms []*litrpc.MacaroonPermission, label string, expiryUnix uint64) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		session, err := m.client.CreateGeneralSession(ctx, label, sessionType, customPerms, expiryUnix)
+		if err != nil {
+			return msgError{err}
+		}
+		return msgSessionCreated{session}
 	}
 }
 
