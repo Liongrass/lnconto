@@ -397,9 +397,9 @@ func (m *Model) viewResultModal() string {
 
 	var helpLine string
 	if m.modalResultIsMacaroon {
-		helpLine = styleHelp.Render("s save to file   any other key to close")
+		helpLine = styleHelp.Render("s save to file   esc close")
 	} else {
-		helpLine = styleHelp.Render("any other key to close")
+		helpLine = styleHelp.Render("esc close")
 	}
 
 	body := fmt.Sprintf("%s\n\n%s\n\n%s\n\n%s\n%s",
@@ -476,7 +476,7 @@ func (m *Model) viewSessionDetailModal() string {
 	if canRevoke {
 		helpParts = append(helpParts, "r revoke")
 	}
-	helpParts = append(helpParts, "any other key close")
+	helpParts = append(helpParts, "esc close")
 
 	body := fmt.Sprintf("%s\n\n%s%s\n\n%s",
 		styleHeader.Render("Session Detail"),
@@ -494,7 +494,7 @@ func (m *Model) viewConfirmRemoveModal() string {
 		styleHeader.Render("Remove Account"),
 		styleValue.Render(`Remove "`+m.modalTitle+`"?`)+"\n"+
 			styleWarning.Render("This cannot be undone."),
-		styleHelp.Render("y confirm   any other key cancel"),
+		styleHelp.Render("y confirm   esc cancel"),
 	)
 	return styleModal.Width(innerW).Render(body)
 }

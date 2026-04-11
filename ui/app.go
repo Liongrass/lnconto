@@ -323,30 +323,20 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "q":
-		if m.view == ViewModal {
-			if m.modal == ModalSaveMacaroon {
-				// Step back to the result modal rather than closing entirely.
-				m.modal = ModalMacaroonResult
-				m.modalInput = ""
-				return m, nil
-			}
-			wasResult := m.modal == ModalMacaroonResult
-			m.modal = ModalNone
-			m.modalInput = ""
-			m.view = m.prevView
-			if wasResult {
-				return m, func() tea.Msg { return tea.EnableMouseCellMotion() }
-			}
-			return m, nil
-		}
-		if m.view == ViewAccountDetail || m.view == ViewSessions {
-			m.view = ViewDashboard
-			return m, nil
+		// Quit from anywhere.
+		if m.view == ViewModal && m.modal == ModalMacaroonResult {
+			// Restore mouse before exiting so the terminal is left clean.
+			return m, tea.Batch(
+				func() tea.Msg { return tea.EnableMouseCellMotion() },
+				tea.Quit,
+			)
 		}
 		return m, tea.Quit
 	case "esc":
+		// Go back one level from anywhere.
 		if m.view == ViewModal {
 			if m.modal == ModalSaveMacaroon {
+				// Step back within the modal stack.
 				m.modal = ModalMacaroonResult
 				m.modalInput = ""
 				return m, nil
@@ -480,7 +470,7 @@ func (m *Model) viewError() string {
 	box := styleModal.Width(innerW).Render(
 		styleHeader.Render("Connection Error") + "\n\n" +
 			styleRed.Render(errMsg) + "\n\n" +
-			styleHelp.Render("r retry   q quit"),
+			styleHelp.Render("r retry   esc back"),
 	)
 	return lipgloss.NewStyle().
 		Width(m.safeWidth()).

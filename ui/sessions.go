@@ -188,13 +188,13 @@ func (m *Model) sessionRowStyle(state litrpc.SessionState) lipgloss.Style {
 }
 
 func (m *Model) sessionsHelp() string {
-	if m.safeWidth() >= 68 {
-		return "↑/↓ navigate   enter select   h hide inactive   r refresh   esc back   q quit"
+	if m.safeWidth() >= 62 {
+		return "↑/↓ navigate   enter select   h hide inactive   r refresh   esc back"
 	}
-	if m.safeWidth() >= 50 {
-		return "↑/↓   enter select   h hide   r refresh   esc   q"
+	if m.safeWidth() >= 46 {
+		return "↑/↓   enter   h hide   r refresh   esc back"
 	}
-	return "↑/↓ enter  h  r  esc  q"
+	return "↑/↓ enter  h  r  esc"
 }
 
 func sessionTypeName(t litrpc.SessionType) string {
