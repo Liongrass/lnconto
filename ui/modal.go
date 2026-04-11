@@ -17,7 +17,8 @@ import (
 func (m *Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.modal {
 	case ModalCredit, ModalDebit, ModalExpiry, ModalNewSession, ModalNewSessionExpiry,
-		ModalNewAccountLabel, ModalNewAccountBalance, ModalNewAccountExpiry:
+		ModalNewAccountLabel, ModalNewAccountBalance, ModalNewAccountExpiry,
+		ModalSaveMacaroon:
 		return m.handleTextInputKey(msg)
 	case ModalConfirmRemove:
 		return m.handleConfirmRemoveKey(msg)
@@ -26,14 +27,23 @@ func (m *Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case ModalMacaroonType:
 		return m.handleMacaroonTypeKey(msg)
 	case ModalMacaroonResult:
-		if msg.String() == "c" {
+		switch msg.String() {
+		case "c":
 			return m, copyToClipboard(m.clipboardPayload)
+		case "s":
+			if m.modalResultIsMacaroon {
+				m.modal = ModalSaveMacaroon
+				m.modalInput = ""
+				return m, nil
+			}
 		}
 		// Any other key closes the modal and restores mouse tracking.
 		m.modal = ModalNone
 		m.modalResult = ""
 		m.clipboardPayload = ""
 		m.copied = false
+		m.macaroonSaved = false
+		m.macaroonSavedPath = ""
 		m.view = m.prevView
 		return m, func() tea.Msg { return tea.EnableMouseCellMotion() }
 	}
@@ -229,6 +239,15 @@ func (m *Model) submitModal() (tea.Model, tea.Cmd) {
 		m.view = ViewLoading
 		m.loadingText = "Creating account..."
 		return m, m.doCreateAccount(m.modalAccountBalance, m.modalAccountLabel, expiry)
+
+	case ModalSaveMacaroon:
+		if input == "" {
+			return m, nil
+		}
+		hex := m.clipboardPayload
+		m.modal = ModalMacaroonResult
+		m.modalInput = ""
+		return m, doSaveMacaroon(hex, input)
 	}
 
 	return m, nil
@@ -266,6 +285,8 @@ func (m *Model) viewModal() string {
 			"Expiry (blank = never):",
 			"30m  2h  7d  3mo  1y  or YYYY-MM-DD",
 		)
+	case ModalSaveMacaroon:
+		content = m.viewTextInputModal("Save Macaroon", "File path:", "~/wallet.macaroon")
 	case ModalConfirmRemove:
 		content = m.viewConfirmRemoveModal()
 	case ModalSessionDetail:
@@ -355,18 +376,28 @@ func (m *Model) viewResultModal() string {
 	}
 	wrapped := wrapText(m.modalResult, contentW)
 
-	var copyLine string
-	if m.copied {
-		copyLine = styleGreen.Render("✓ Copied to clipboard!")
+	var statusLine string
+	switch {
+	case m.copied:
+		statusLine = styleGreen.Render("✓ Copied to clipboard!")
+	case m.macaroonSaved:
+		statusLine = styleGreen.Render("✓ Saved to " + m.macaroonSavedPath)
+	default:
+		statusLine = styleHelp.Render("select text to copy   c clipboard")
+	}
+
+	var helpLine string
+	if m.modalResultIsMacaroon {
+		helpLine = styleHelp.Render("s save to file   any other key to close")
 	} else {
-		copyLine = styleHelp.Render("select text to copy   c clipboard")
+		helpLine = styleHelp.Render("any other key to close")
 	}
 
 	body := fmt.Sprintf("%s\n\n%s\n\n%s\n%s",
 		styleHeader.Render("Result"),
 		styleValue.Render(wrapped),
-		copyLine,
-		styleHelp.Render("any other key to close"),
+		statusLine,
+		helpLine,
 	)
 	return styleModal.Width(innerW).Render(body)
 }

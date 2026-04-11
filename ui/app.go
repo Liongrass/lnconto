@@ -2,7 +2,11 @@ package ui
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -40,6 +44,7 @@ const (
 	ModalNewAccountExpiry
 	ModalConfirmRemove
 	ModalSessionDetail
+	ModalSaveMacaroon
 )
 
 // msgs for async operations
@@ -52,6 +57,7 @@ type msgAccountRemoved struct{ id string }
 type msgSessionRevoked struct{ localPubKey []byte }
 type msgSessionCreated struct{ session *litrpc.Session }
 type msgMacaroon struct{ hex string }
+type msgMacaroonSaved struct{ path string }
 type msgError struct{ err error }
 type msgLoading struct{ text string }
 type msgCopied struct{}
@@ -96,9 +102,12 @@ type Model struct {
 	// session detail modal state
 	modalSessionLocalKey []byte // local public key of the session being viewed
 
-	// clipboard state for the result modal
-	clipboardPayload string // the raw value the user can copy (macaroon hex or pairing phrase)
-	copied           bool   // true after a successful copy, shown as feedback
+	// clipboard / result modal state
+	clipboardPayload     string // raw value to copy (macaroon hex or pairing phrase)
+	copied               bool   // true after a successful OSC-52 copy
+	modalResultIsMacaroon bool  // true when result is a macaroon (not a pairing phrase)
+	macaroonSaved        bool   // true after a successful file save
+	macaroonSavedPath    string // path that was last saved to
 }
 
 // New creates the initial model.
@@ -269,6 +278,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.modal = ModalNone
 		m.modalInput = ""
 		m.copied = false
+		m.macaroonSaved = false
+		m.macaroonSavedPath = ""
+		m.modalResultIsMacaroon = false
 		m.clipboardPayload = msg.session.PairingSecretMnemonic
 		m.modalResult = fmt.Sprintf(
 			"Session created!\n\nPairing phrase:\n%s\n\nUse this in your LNC-compatible wallet.",
@@ -282,6 +294,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.modal = ModalNone
 		m.modalInput = ""
 		m.copied = false
+		m.macaroonSaved = false
+		m.macaroonSavedPath = ""
+		m.modalResultIsMacaroon = true
 		m.clipboardPayload = msg.hex
 		m.modalResult = fmt.Sprintf(
 			"Macaroon (hex):\n\n%s\n\nStore this securely — it grants access to the account.",
@@ -290,6 +305,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.modal = ModalMacaroonResult
 		m.view = ViewModal
 		return m, func() tea.Msg { return tea.DisableMouse() }
+
+	case msgMacaroonSaved:
+		m.macaroonSaved = true
+		m.macaroonSavedPath = msg.path
+		m.modal = ModalMacaroonResult
+		m.view = ViewModal
+		return m, nil
 
 	case msgError:
 		m.err = msg.err
@@ -311,6 +333,12 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "q":
 		if m.view == ViewModal {
+			if m.modal == ModalSaveMacaroon {
+				// Step back to the result modal rather than closing entirely.
+				m.modal = ModalMacaroonResult
+				m.modalInput = ""
+				return m, nil
+			}
 			wasResult := m.modal == ModalMacaroonResult
 			m.modal = ModalNone
 			m.modalInput = ""
@@ -327,6 +355,11 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "esc":
 		if m.view == ViewModal {
+			if m.modal == ModalSaveMacaroon {
+				m.modal = ModalMacaroonResult
+				m.modalInput = ""
+				return m, nil
+			}
 			wasResult := m.modal == ModalMacaroonResult
 			m.modal = ModalNone
 			m.modalInput = ""
@@ -389,6 +422,29 @@ func (m *Model) doCreateAccount(balance uint64, label string, expiryUnix int64) 
 			return msgError{err}
 		}
 		return msgAccountCreated{acc}
+	}
+}
+
+func doSaveMacaroon(hexStr, path string) tea.Cmd {
+	return func() tea.Msg {
+		// Expand ~ to the user's home directory.
+		if strings.HasPrefix(path, "~/") {
+			home, err := os.UserHomeDir()
+			if err == nil {
+				path = filepath.Join(home, path[2:])
+			}
+		}
+		data, err := hex.DecodeString(hexStr)
+		if err != nil {
+			return msgError{fmt.Errorf("invalid macaroon data: %w", err)}
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			return msgError{fmt.Errorf("creating directory: %w", err)}
+		}
+		if err := os.WriteFile(path, data, 0600); err != nil {
+			return msgError{fmt.Errorf("saving macaroon: %w", err)}
+		}
+		return msgMacaroonSaved{path}
 	}
 }
 
