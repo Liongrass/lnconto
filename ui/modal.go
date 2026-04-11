@@ -283,14 +283,25 @@ func (m *Model) viewModal() string {
 		Render(content)
 }
 
+// modalInnerWidth returns the content width for compact input/choice modals.
+// Capped at 60 so they don't sprawl across a wide terminal.
 func (m *Model) modalInnerWidth() int {
-	// Modal box: border(2) + padding(6) = 8 overhead. Leave 4 margin each side.
 	w := m.safeWidth() - 16
 	if w < 30 {
 		w = 30
 	}
 	if w > 60 {
 		w = 60
+	}
+	return w
+}
+
+// contentModalWidth returns the content width for result/detail modals that
+// benefit from filling more of the terminal (pairing phrases, macaroon hex).
+func (m *Model) contentModalWidth() int {
+	w := m.safeWidth() - 8
+	if w < 30 {
+		w = 30
 	}
 	return w
 }
@@ -334,11 +345,7 @@ func (m *Model) viewMacaroonTypeModal() string {
 }
 
 func (m *Model) viewResultModal() string {
-	// Make the result modal wider since it may contain a long macaroon hex.
-	innerW := m.safeWidth() - 8
-	if innerW < 30 {
-		innerW = 30
-	}
+	innerW := m.contentModalWidth()
 
 	// Wrap the result body to the inner content width.
 	// styleModal has Padding(1,3) → content width = innerW - 6.
@@ -365,7 +372,7 @@ func (m *Model) viewResultModal() string {
 }
 
 func (m *Model) viewSessionDetailModal() string {
-	innerW := m.modalInnerWidth()
+	innerW := m.contentModalWidth()
 
 	// Find the session by local public key.
 	var s *litrpc.Session
