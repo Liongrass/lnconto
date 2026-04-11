@@ -54,13 +54,8 @@ func (m *Model) handleAccountDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.doLoadMorePayments(acc.Payments)
 		}
 	case "r":
-		acc := m.selectedAcc()
-		if acc != nil && !m.paymentsLoading {
-			m.paymentsLoading = true
-			m.enrichedPayments = nil
-			m.selectedPayment = 0
-			m.paymentsScroll = 0
-			return m, m.doLoadPayments(acc.Payments)
+		if !m.paymentsLoading {
+			return m, m.doGetAccount()
 		}
 	case "c":
 		m.modal = ModalCredit
@@ -273,6 +268,22 @@ func formatPaymentTime(nsec int64) string {
 		return t.Format("15:04")
 	}
 	return t.Format("2006-01-02")
+}
+
+func (m *Model) doGetAccount() tea.Cmd {
+	acc := m.selectedAcc()
+	if acc == nil {
+		return nil
+	}
+	id := acc.Id
+	return func() tea.Msg {
+		ctx := context.Background()
+		updated, err := m.client.GetAccount(ctx, id)
+		if err != nil {
+			return msgError{err}
+		}
+		return msgAccountUpdated{updated}
+	}
 }
 
 func (m *Model) doCreditAccount(amount uint64) tea.Cmd {
