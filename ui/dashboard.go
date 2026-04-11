@@ -277,23 +277,29 @@ func truncate(s string, max int) string {
 	return s[:max-1] + "…"
 }
 
-// wrapText splits s into lines of at most width runes.
+// wrapText wraps s so that no line exceeds width runes. Existing newlines in s
+// are preserved; only lines that are too long get split (character-based, which
+// is fine for hex; natural-language lines are usually short enough to fit).
 func wrapText(s string, width int) string {
 	if width <= 0 {
 		return s
 	}
-	runes := []rune(s)
-	var out strings.Builder
-	for len(runes) > 0 {
-		n := width
-		if n > len(runes) {
-			n = len(runes)
+	lines := strings.Split(s, "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		runes := []rune(line)
+		if len(runes) <= width {
+			out = append(out, line)
+			continue
 		}
-		out.WriteString(string(runes[:n]))
-		runes = runes[n:]
-		if len(runes) > 0 {
-			out.WriteByte('\n')
+		for len(runes) > 0 {
+			n := width
+			if n > len(runes) {
+				n = len(runes)
+			}
+			out = append(out, string(runes[:n]))
+			runes = runes[n:]
 		}
 	}
-	return out.String()
+	return strings.Join(out, "\n")
 }
