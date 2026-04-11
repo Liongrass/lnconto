@@ -16,28 +16,33 @@ type PaymentInfo struct {
 	Memo    string
 }
 
-// oneShotMacCred is a gRPC per-call credential that sends a single macaroon.
-type oneShotMacCred struct{ macHex string }
-
-func (c *oneShotMacCred) GetRequestMetadata(_ context.Context, _ ...string) (map[string]string, error) {
-	return map[string]string{"macaroon": c.macHex}, nil
-}
-func (c *oneShotMacCred) RequireTransportSecurity() bool { return true }
-
-// ListAccountPayments bakes a readonly account-attenuated macaroon and uses it
-// to call ListPayments, so the node middleware returns only the payments
-// belonging to that account. Results are returned newest-first.
+// ListAccountPayments bakes a readonly account-attenuated macaroon and opens a
+// dedicated gRPC connection that carries only that macaroon, so the litd
+// middleware sees exactly one credential and filters ListPayments to the
+// payments belonging to this account. Results are returned newest-first.
 func (c *Client) ListAccountPayments(ctx context.Context, accountID string) ([]*PaymentInfo, error) {
 	macHex, err := c.BakeAccountMacaroon(ctx, accountID, MacaroonTypeAccountReadonly)
 	if err != nil {
 		return nil, fmt.Errorf("baking account macaroon: %w", err)
 	}
 
-	cred := grpc.PerRPCCredentials(&oneShotMacCred{macHex: macHex})
-	resp, err := c.Lightning.ListPayments(ctx, &lnrpc.ListPaymentsRequest{
+	// Open a short-lived connection with only the account macaroon.
+	// Using the existing supermacaroon connection would send two macaroons.
+	creds := &macaroonCredentials{hex: macHex}
+	conn, err := grpc.NewClient(
+		c.rpcServer,
+		grpc.WithTransportCredentials(c.tlsCreds),
+		grpc.WithPerRPCCredentials(creds),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("dialing for account payments: %w", err)
+	}
+	defer conn.Close()
+
+	resp, err := lnrpc.NewLightningClient(conn).ListPayments(ctx, &lnrpc.ListPaymentsRequest{
 		Reversed:          true,
 		IncludeIncomplete: true,
-	}, cred)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("ListPayments: %w", err)
 	}
