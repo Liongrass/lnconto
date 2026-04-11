@@ -90,9 +90,8 @@ type Model struct {
 
 	// modal state
 	modal             ModalKind
-	modalInput        string
-	modalResult       string
-	modalTitle        string
+	modalInput  string
+	modalTitle  string
 	modalSessionLabel string // holds the label while the expiry step is shown
 
 	// new-account multi-step state
@@ -282,10 +281,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.macaroonSavedPath = ""
 		m.modalResultIsMacaroon = false
 		m.clipboardPayload = msg.session.PairingSecretMnemonic
-		m.modalResult = fmt.Sprintf(
-			"Session created!\n\nPairing phrase:\n%s\n\nUse this in your LNC-compatible wallet.",
-			msg.session.PairingSecretMnemonic,
-		)
 		m.modal = ModalMacaroonResult
 		m.view = ViewModal
 		return m, func() tea.Msg { return tea.DisableMouse() }
@@ -298,10 +293,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.macaroonSavedPath = ""
 		m.modalResultIsMacaroon = true
 		m.clipboardPayload = msg.hex
-		m.modalResult = fmt.Sprintf(
-			"Macaroon (hex):\n\n%s\n\nStore this securely — it grants access to the account.",
-			msg.hex,
-		)
 		m.modal = ModalMacaroonResult
 		m.view = ViewModal
 		return m, func() tea.Msg { return tea.DisableMouse() }

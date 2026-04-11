@@ -39,7 +39,6 @@ func (m *Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		// Any other key closes the modal and restores mouse tracking.
 		m.modal = ModalNone
-		m.modalResult = ""
 		m.clipboardPayload = ""
 		m.copied = false
 		m.macaroonSaved = false
@@ -367,14 +366,24 @@ func (m *Model) viewMacaroonTypeModal() string {
 
 func (m *Model) viewResultModal() string {
 	innerW := m.contentModalWidth()
-
-	// Wrap the result body to the inner content width.
-	// styleModal has Padding(1,3) → content width = innerW - 6.
+	// styleModal has Padding(1,3) → usable content width = innerW - 6.
 	contentW := innerW - 6
 	if contentW < 20 {
 		contentW = 20
 	}
-	wrapped := wrapText(m.modalResult, contentW)
+
+	// Wrap only the actual payload (hex / mnemonic); context lines are short
+	// and rendered separately so they don't get the same visual weight.
+	wrapped := wrapText(m.clipboardPayload, contentW)
+
+	var title, context string
+	if m.modalResultIsMacaroon {
+		title = "Macaroon"
+		context = "Store this securely — it grants access to the account."
+	} else {
+		title = "Pairing Phrase"
+		context = "Use this in your LNC-compatible wallet."
+	}
 
 	var statusLine string
 	switch {
@@ -393,9 +402,10 @@ func (m *Model) viewResultModal() string {
 		helpLine = styleHelp.Render("any other key to close")
 	}
 
-	body := fmt.Sprintf("%s\n\n%s\n\n%s\n%s",
-		styleHeader.Render("Result"),
+	body := fmt.Sprintf("%s\n\n%s\n\n%s\n\n%s\n%s",
+		styleHeader.Render(title),
 		styleValue.Render(wrapped),
+		styleMuted.Render(context),
 		statusLine,
 		helpLine,
 	)
