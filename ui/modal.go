@@ -61,8 +61,18 @@ func (m *Model) handleTextInputKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *Model) handleSessionDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "c":
-		if m.clipboardPayload != "" {
-			return m, copyToClipboard(m.clipboardPayload)
+		// Only copy if the session hasn't been connected to yet.
+		if m.clipboardPayload != "" && len(m.modalSessionLocalKey) > 0 {
+			var connected bool
+			for _, s := range m.sessions {
+				if string(s.LocalPublicKey) == string(m.modalSessionLocalKey) {
+					connected = len(s.RemotePublicKey) > 0
+					break
+				}
+			}
+			if !connected {
+				return m, copyToClipboard(m.clipboardPayload)
+			}
 		}
 	case "r":
 		if m.modalSessionLocalKey != nil {
@@ -388,21 +398,27 @@ func (m *Model) viewSessionDetailModal() string {
 		details += "\n" + styleLabel.Render("Account:") + " " + styleValue.Render(truncate(s.AccountId, innerW-10))
 	}
 
+	// Show pairing phrase only when the session has not been connected to yet
+	// (remote_public_key unset). Once a wallet has paired, show "session in use"
+	// instead — the phrase is no longer needed and showing it would be confusing.
+	sessionConnected := len(s.RemotePublicKey) > 0
 	var phraseSection string
-	if s.PairingSecretMnemonic != "" {
+	if !sessionConnected && s.PairingSecretMnemonic != "" {
 		contentW := innerW - 6
 		if contentW < 20 {
 			contentW = 20
 		}
 		phraseSection = "\n\n" + styleLabel.Render("Pairing phrase:") + "\n" +
 			styleValue.Render(wrapText(s.PairingSecretMnemonic, contentW))
+	} else if sessionConnected {
+		phraseSection = "\n\n" + styleGreen.Render("● session in use")
 	}
 
 	// Build help line based on available actions.
 	canRevoke := s.SessionState == litrpc.SessionState_STATE_CREATED ||
 		s.SessionState == litrpc.SessionState_STATE_IN_USE
 	var helpParts []string
-	if s.PairingSecretMnemonic != "" {
+	if !sessionConnected && s.PairingSecretMnemonic != "" {
 		if m.copied {
 			helpParts = append(helpParts, styleGreen.Render("✓ copied"))
 		} else {
