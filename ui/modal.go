@@ -338,7 +338,7 @@ func (m *Model) viewTextInputModal(title, prompt, placeholder string) string {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(colorPrimary).
 		Padding(0, 1).
-		Width(innerW).
+		Width(innerW - 8).
 		Render(inputDisplay + "█")
 
 	body := fmt.Sprintf(
