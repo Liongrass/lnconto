@@ -40,6 +40,21 @@ func (m *Model) handleDashboardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.paymentsScroll = 0
 			m.view = ViewAccountDetail
 		}
+	case "n":
+		m.modal = ModalNewAccountLabel
+		m.modalInput = ""
+		m.modalAccountLabel = ""
+		m.modalAccountBalance = 0
+		m.prevView = ViewDashboard
+		m.view = ViewModal
+	case "x", "X":
+		if len(m.accounts) > 0 {
+			acc := m.accounts[m.selectedAccount]
+			m.modalTitle = accountLabel(acc)
+			m.modal = ModalConfirmRemove
+			m.prevView = ViewDashboard
+			m.view = ViewModal
+		}
 	case "S", "s":
 		m.view = ViewLoading
 		m.loadingText = "Loading sessions..."
@@ -198,13 +213,16 @@ func (m *Model) formatAccountRow(label, balance, expiry string, lw, bw, ew int) 
 }
 
 func (m *Model) dashboardHelp() string {
-	if m.safeWidth() >= 72 {
-		return "↑/↓ navigate   enter select   S sessions   r refresh   q quit"
+	if m.safeWidth() >= 80 {
+		return "↑/↓ navigate   enter select   n new   x remove   S sessions   r refresh   q quit"
 	}
-	if m.safeWidth() >= 50 {
-		return "↑/↓   enter select   S sessions   r   q"
+	if m.safeWidth() >= 60 {
+		return "↑/↓   enter   n new   x remove   S sessions   r   q"
 	}
-	return "↑/↓ enter  S sess  r  q"
+	if m.safeWidth() >= 44 {
+		return "↑/↓ enter  n new  x del  S  r  q"
+	}
+	return "↑/↓ enter  n  x  S  r  q"
 }
 
 // ── helpers used across views ──────────────────────────────────────────────

@@ -65,3 +65,26 @@ func (c *Client) UpdateExpiry(ctx context.Context, id string, expiryUnix int64) 
 	}
 	return resp, nil
 }
+
+// CreateAccount creates a new account with the given balance, label, and
+// expiry (unix timestamp, 0 = never).
+func (c *Client) CreateAccount(ctx context.Context, balance uint64, label string, expiryUnix int64) (*litrpc.Account, error) {
+	resp, err := c.Accounts.CreateAccount(ctx, &litrpc.CreateAccountRequest{
+		AccountBalance: balance,
+		Label:          label,
+		ExpirationDate: expiryUnix,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("CreateAccount: %w", err)
+	}
+	return resp.Account, nil
+}
+
+// RemoveAccount deletes an account by ID.
+func (c *Client) RemoveAccount(ctx context.Context, id string) error {
+	_, err := c.Accounts.RemoveAccount(ctx, &litrpc.RemoveAccountRequest{Id: id})
+	if err != nil {
+		return fmt.Errorf("RemoveAccount: %w", err)
+	}
+	return nil
+}

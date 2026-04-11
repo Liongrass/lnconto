@@ -35,6 +35,10 @@ const (
 	ModalNewSessionExpiry
 	ModalMacaroonType
 	ModalMacaroonResult
+	ModalNewAccountLabel
+	ModalNewAccountBalance
+	ModalNewAccountExpiry
+	ModalConfirmRemove
 )
 
 // msgs for async operations
@@ -42,6 +46,8 @@ type msgNodeInfo struct{ info *client.NodeInfo }
 type msgAccountList struct{ accounts []*litrpc.Account }
 type msgSessionList struct{ sessions []*litrpc.Session }
 type msgAccountUpdated struct{ account *litrpc.Account }
+type msgAccountCreated struct{ account *litrpc.Account }
+type msgAccountRemoved struct{ id string }
 type msgSessionCreated struct{ session *litrpc.Session }
 type msgMacaroon struct{ hex string }
 type msgError struct{ err error }
@@ -77,6 +83,10 @@ type Model struct {
 	modalResult       string
 	modalTitle        string
 	modalSessionLabel string // holds the label while the expiry step is shown
+
+	// new-account multi-step state
+	modalAccountLabel   string // label collected in step 1
+	modalAccountBalance uint64 // balance collected in step 2
 
 	// clipboard state for the result modal
 	clipboardPayload string // the raw value the user can copy (macaroon hex or pairing phrase)
@@ -194,6 +204,33 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.modalInput = ""
 		m.paymentsScroll = 0
 		m.view = ViewAccountDetail
+		return m, nil
+
+	case msgAccountCreated:
+		m.accounts = append(m.accounts, msg.account)
+		m.selectedAccount = len(m.accounts) - 1
+		m.accountsScroll = clampScroll(m.accountsScroll, m.selectedAccount, m.visibleAccountRows())
+		m.modal = ModalNone
+		m.modalInput = ""
+		m.modalAccountLabel = ""
+		m.modalAccountBalance = 0
+		m.view = ViewDashboard
+		return m, nil
+
+	case msgAccountRemoved:
+		for i, a := range m.accounts {
+			if a.Id == msg.id {
+				m.accounts = append(m.accounts[:i], m.accounts[i+1:]...)
+				break
+			}
+		}
+		if m.selectedAccount >= len(m.accounts) && m.selectedAccount > 0 {
+			m.selectedAccount = len(m.accounts) - 1
+		}
+		m.accountsScroll = clampScroll(m.accountsScroll, m.selectedAccount, m.visibleAccountRows())
+		m.modal = ModalNone
+		m.modalInput = ""
+		m.view = ViewDashboard
 		return m, nil
 
 	case msgCopied:
@@ -314,6 +351,27 @@ func (m *Model) View() string {
 		return m.viewError()
 	}
 	return ""
+}
+
+func (m *Model) doCreateAccount(balance uint64, label string, expiryUnix int64) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		acc, err := m.client.CreateAccount(ctx, balance, label, expiryUnix)
+		if err != nil {
+			return msgError{err}
+		}
+		return msgAccountCreated{acc}
+	}
+}
+
+func (m *Model) doRemoveAccount(id string) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		if err := m.client.RemoveAccount(ctx, id); err != nil {
+			return msgError{err}
+		}
+		return msgAccountRemoved{id}
+	}
 }
 
 func (m *Model) viewLoading() string {

@@ -15,8 +15,11 @@ import (
 
 func (m *Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.modal {
-	case ModalCredit, ModalDebit, ModalExpiry, ModalNewSession, ModalNewSessionExpiry:
+	case ModalCredit, ModalDebit, ModalExpiry, ModalNewSession, ModalNewSessionExpiry,
+		ModalNewAccountLabel, ModalNewAccountBalance, ModalNewAccountExpiry:
 		return m.handleTextInputKey(msg)
+	case ModalConfirmRemove:
+		return m.handleConfirmRemoveKey(msg)
 	case ModalMacaroonType:
 		return m.handleMacaroonTypeKey(msg)
 	case ModalMacaroonResult:
@@ -49,6 +52,26 @@ func (m *Model) handleTextInputKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.modalInput += string(msg.Runes)
 		}
 	}
+	return m, nil
+}
+
+func (m *Model) handleConfirmRemoveKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.String() == "y" || msg.String() == "Y" {
+		acc := m.selectedAcc()
+		if acc == nil {
+			m.modal = ModalNone
+			m.view = m.prevView
+			return m, nil
+		}
+		id := acc.Id
+		m.modal = ModalNone
+		m.view = ViewLoading
+		m.loadingText = "Removing account..."
+		return m, m.doRemoveAccount(id)
+	}
+	// Any other key cancels.
+	m.modal = ModalNone
+	m.view = m.prevView
 	return m, nil
 }
 
@@ -135,6 +158,34 @@ func (m *Model) submitModal() (tea.Model, tea.Cmd) {
 		m.view = ViewLoading
 		m.loadingText = "Creating session..."
 		return m, m.doCreateSession(m.modalSessionLabel, expiry)
+
+	case ModalNewAccountLabel:
+		// Label is optional; advance to balance step.
+		m.modalAccountLabel = input
+		m.modalInput = ""
+		m.modal = ModalNewAccountBalance
+		return m, nil
+
+	case ModalNewAccountBalance:
+		amount, err := strconv.ParseUint(input, 10, 64)
+		if err != nil || amount == 0 {
+			m.modalInput = ""
+			return m, nil
+		}
+		m.modalAccountBalance = amount
+		m.modalInput = ""
+		m.modal = ModalNewAccountExpiry
+		return m, nil
+
+	case ModalNewAccountExpiry:
+		expiry, err := parseAccountExpiry(input)
+		if err != nil {
+			m.modalInput = ""
+			return m, nil
+		}
+		m.view = ViewLoading
+		m.loadingText = "Creating account..."
+		return m, m.doCreateAccount(m.modalAccountBalance, m.modalAccountLabel, expiry)
 	}
 
 	return m, nil
@@ -158,6 +209,22 @@ func (m *Model) viewModal() string {
 			"Duration (leave blank for 1 year):",
 			"30m  2h  7d  3mo  1y",
 		)
+	case ModalNewAccountLabel:
+		content = m.viewTextInputModal("New Account", "Label (optional):", "e.g. My Budget")
+	case ModalNewAccountBalance:
+		title := "New Account"
+		if m.modalAccountLabel != "" {
+			title = fmt.Sprintf(`New Account "%s"`, m.modalAccountLabel)
+		}
+		content = m.viewTextInputModal(title, "Initial balance (satoshis):", "e.g. 100000")
+	case ModalNewAccountExpiry:
+		content = m.viewTextInputModal(
+			"New Account — Expiry",
+			"Expiry (blank = never):",
+			"30m  2h  7d  3mo  1y  or YYYY-MM-DD",
+		)
+	case ModalConfirmRemove:
+		content = m.viewConfirmRemoveModal()
 	case ModalMacaroonType:
 		content = m.viewMacaroonTypeModal()
 	case ModalMacaroonResult:
@@ -252,6 +319,18 @@ func (m *Model) viewResultModal() string {
 	return styleModal.Width(innerW).Render(body)
 }
 
+func (m *Model) viewConfirmRemoveModal() string {
+	innerW := m.modalInnerWidth()
+	body := fmt.Sprintf(
+		"%s\n\n%s\n\n%s",
+		styleHeader.Render("Remove Account"),
+		styleValue.Render(`Remove "`+m.modalTitle+`"?`)+"\n"+
+			styleWarning.Render("This cannot be undone."),
+		styleHelp.Render("y confirm   any other key cancel"),
+	)
+	return styleModal.Width(innerW).Render(body)
+}
+
 // copyToClipboard writes the OSC 52 terminal sequence to stdout, which causes
 // the terminal emulator to place text in the system clipboard.  This works in
 // all OSC 52-capable terminals (kitty, Alacritty, WezTerm, iTerm2, GNOME
@@ -307,4 +386,26 @@ func parseSessionExpiry(s string) (uint64, error) {
 	}
 
 	return uint64(time.Now().Add(d).Unix()), nil
+}
+
+// parseAccountExpiry parses an account expiry string.  Blank or "0" means
+// never (returns 0).  Accepts YYYY-MM-DD dates and the same duration suffixes
+// as parseSessionExpiry (m, h, d, mo, y).
+func parseAccountExpiry(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" || s == "0" {
+		return 0, nil
+	}
+
+	// Try YYYY-MM-DD first.
+	if t, err := time.Parse("2006-01-02", s); err == nil {
+		return t.Unix(), nil
+	}
+
+	// Try duration suffixes (reuse session expiry logic, cast result).
+	ts, err := parseSessionExpiry(s)
+	if err != nil {
+		return 0, err
+	}
+	return int64(ts), nil
 }
