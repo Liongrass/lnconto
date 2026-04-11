@@ -21,7 +21,24 @@ func (m *Model) visibleSessionRows() int {
 	return rows
 }
 
+// filteredSessions returns the sessions list with inactive (revoked/expired)
+// sessions removed when hideInactiveSessions is set.
+func (m *Model) filteredSessions() []*litrpc.Session {
+	if !m.hideInactiveSessions {
+		return m.sessions
+	}
+	out := make([]*litrpc.Session, 0, len(m.sessions))
+	for _, s := range m.sessions {
+		if s.SessionState != litrpc.SessionState_STATE_REVOKED &&
+			s.SessionState != litrpc.SessionState_STATE_EXPIRED {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 func (m *Model) handleSessionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	sessions := m.filteredSessions()
 	switch msg.String() {
 	case "up", "k":
 		if m.selectedSession > 0 {
@@ -29,10 +46,32 @@ func (m *Model) handleSessionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.sessionsScroll = clampScroll(m.sessionsScroll, m.selectedSession, m.visibleSessionRows())
 		}
 	case "down", "j":
-		if m.selectedSession < len(m.sessions)-1 {
+		if m.selectedSession < len(sessions)-1 {
 			m.selectedSession++
 			m.sessionsScroll = clampScroll(m.sessionsScroll, m.selectedSession, m.visibleSessionRows())
 		}
+	case "enter", " ":
+		if len(sessions) > 0 && m.selectedSession < len(sessions) {
+			s := sessions[m.selectedSession]
+			m.modalSessionLocalKey = s.LocalPublicKey
+			m.clipboardPayload = s.PairingSecretMnemonic
+			m.copied = false
+			m.modal = ModalSessionDetail
+			m.prevView = ViewSessions
+			m.view = ViewModal
+		}
+	case "h":
+		m.hideInactiveSessions = !m.hideInactiveSessions
+		// Clamp selection to the new filtered length.
+		filtered := m.filteredSessions()
+		if m.selectedSession >= len(filtered) {
+			if len(filtered) > 0 {
+				m.selectedSession = len(filtered) - 1
+			} else {
+				m.selectedSession = 0
+			}
+		}
+		m.sessionsScroll = clampScroll(m.sessionsScroll, m.selectedSession, m.visibleSessionRows())
 	case "r":
 		m.view = ViewLoading
 		m.loadingText = "Refreshing sessions..."
@@ -46,9 +85,19 @@ func (m *Model) viewSessions() string {
 	var sb strings.Builder
 
 	sb.WriteString(styleTitleBar.Width(w).Render("⚡ lnconto — Sessions") + "\n\n")
-	sb.WriteString(styleHeader.Render(fmt.Sprintf("Sessions (%d)", len(m.sessions))) + "\n")
 
-	if len(m.sessions) == 0 {
+	sessions := m.filteredSessions()
+	header := fmt.Sprintf("Sessions (%d", len(sessions))
+	if m.hideInactiveSessions && len(sessions) != len(m.sessions) {
+		header += fmt.Sprintf(" of %d", len(m.sessions))
+	}
+	header += ")"
+	if m.hideInactiveSessions {
+		header += "  " + styleMuted.Render("[active only]")
+	}
+	sb.WriteString(styleHeader.Render(header) + "\n")
+
+	if len(sessions) == 0 {
 		sb.WriteString(styleMuted.Padding(0, 1).Render("No sessions found.") + "\n")
 	} else {
 		lw, tw, sw, ew := m.sessionColWidths()
@@ -57,11 +106,11 @@ func (m *Model) viewSessions() string {
 
 		visible := m.visibleSessionRows()
 		end := m.sessionsScroll + visible
-		if end > len(m.sessions) {
-			end = len(m.sessions)
+		if end > len(sessions) {
+			end = len(sessions)
 		}
 		for i := m.sessionsScroll; i < end; i++ {
-			s := m.sessions[i]
+			s := sessions[i]
 			row := m.formatSessionRow(
 				s.Label,
 				sessionTypeName(s.SessionType),
@@ -77,10 +126,10 @@ func (m *Model) viewSessions() string {
 			}
 		}
 
-		if len(m.sessions) > visible {
+		if len(sessions) > visible {
 			sb.WriteString(styleMuted.Render(fmt.Sprintf(
 				"  %d–%d of %d  (↑/↓ to scroll)",
-				m.sessionsScroll+1, end, len(m.sessions),
+				m.sessionsScroll+1, end, len(sessions),
 			)) + "\n")
 		}
 	}
@@ -139,10 +188,13 @@ func (m *Model) sessionRowStyle(state litrpc.SessionState) lipgloss.Style {
 }
 
 func (m *Model) sessionsHelp() string {
-	if m.safeWidth() >= 50 {
-		return "↑/↓ navigate   r refresh   esc back   q quit"
+	if m.safeWidth() >= 68 {
+		return "↑/↓ navigate   enter select   h hide inactive   r refresh   esc back   q quit"
 	}
-	return "↑/↓   r   esc   q"
+	if m.safeWidth() >= 50 {
+		return "↑/↓   enter select   h hide   r refresh   esc   q"
+	}
+	return "↑/↓ enter  h  r  esc  q"
 }
 
 func sessionTypeName(t litrpc.SessionType) string {

@@ -16,6 +16,17 @@ func (c *Client) ListSessions(ctx context.Context) ([]*litrpc.Session, error) {
 	return resp.Sessions, nil
 }
 
+// RevokeSession revokes an active session identified by its local public key.
+func (c *Client) RevokeSession(ctx context.Context, localPubKey []byte) error {
+	_, err := c.Sessions.RevokeSession(ctx, &litrpc.RevokeSessionRequest{
+		LocalPublicKey: localPubKey,
+	})
+	if err != nil {
+		return fmt.Errorf("RevokeSession: %w", err)
+	}
+	return nil
+}
+
 // CreateAccountSession creates a new LNC session tied to an account.
 func (c *Client) CreateAccountSession(ctx context.Context, label, accountID, mailboxAddr string, expiryUnix uint64) (*litrpc.Session, error) {
 	if mailboxAddr == "" {

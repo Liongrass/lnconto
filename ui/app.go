@@ -39,6 +39,7 @@ const (
 	ModalNewAccountBalance
 	ModalNewAccountExpiry
 	ModalConfirmRemove
+	ModalSessionDetail
 )
 
 // msgs for async operations
@@ -48,6 +49,7 @@ type msgSessionList struct{ sessions []*litrpc.Session }
 type msgAccountUpdated struct{ account *litrpc.Account }
 type msgAccountCreated struct{ account *litrpc.Account }
 type msgAccountRemoved struct{ id string }
+type msgSessionRevoked struct{ localPubKey []byte }
 type msgSessionCreated struct{ session *litrpc.Session }
 type msgMacaroon struct{ hex string }
 type msgError struct{ err error }
@@ -77,6 +79,9 @@ type Model struct {
 	sessionsScroll int
 	paymentsScroll int
 
+	// sessions view filter
+	hideInactiveSessions bool
+
 	// modal state
 	modal             ModalKind
 	modalInput        string
@@ -87,6 +92,9 @@ type Model struct {
 	// new-account multi-step state
 	modalAccountLabel   string // label collected in step 1
 	modalAccountBalance uint64 // balance collected in step 2
+
+	// session detail modal state
+	modalSessionLocalKey []byte // local public key of the session being viewed
 
 	// clipboard state for the result modal
 	clipboardPayload string // the raw value the user can copy (macaroon hex or pairing phrase)
@@ -190,6 +198,26 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sessions = msg.sessions
 		m.sessionsScroll = 0
 		m.selectedSession = 0
+		m.view = ViewSessions
+		return m, nil
+
+	case msgSessionRevoked:
+		for i, s := range m.sessions {
+			if string(s.LocalPublicKey) == string(msg.localPubKey) {
+				m.sessions[i].SessionState = litrpc.SessionState_STATE_REVOKED
+				break
+			}
+		}
+		m.modal = ModalNone
+		m.modalSessionLocalKey = nil
+		m.clipboardPayload = ""
+		m.copied = false
+		// Keep selectedSession within the (potentially now-shorter) filtered list.
+		filtered := m.filteredSessions()
+		if m.selectedSession >= len(filtered) && m.selectedSession > 0 {
+			m.selectedSession = len(filtered) - 1
+		}
+		m.sessionsScroll = clampScroll(m.sessionsScroll, m.selectedSession, m.visibleSessionRows())
 		m.view = ViewSessions
 		return m, nil
 
@@ -361,6 +389,16 @@ func (m *Model) doCreateAccount(balance uint64, label string, expiryUnix int64) 
 			return msgError{err}
 		}
 		return msgAccountCreated{acc}
+	}
+}
+
+func (m *Model) doRevokeSession(localPubKey []byte) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		if err := m.client.RevokeSession(ctx, localPubKey); err != nil {
+			return msgError{err}
+		}
+		return msgSessionRevoked{localPubKey}
 	}
 }
 

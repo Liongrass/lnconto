@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	xansi "github.com/charmbracelet/x/ansi"
+	"github.com/lightninglabs/lightning-terminal/litrpc"
 	"github.com/lnconto/lnconto/client"
 )
 
@@ -20,6 +21,8 @@ func (m *Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleTextInputKey(msg)
 	case ModalConfirmRemove:
 		return m.handleConfirmRemoveKey(msg)
+	case ModalSessionDetail:
+		return m.handleSessionDetailKey(msg)
 	case ModalMacaroonType:
 		return m.handleMacaroonTypeKey(msg)
 	case ModalMacaroonResult:
@@ -52,6 +55,33 @@ func (m *Model) handleTextInputKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.modalInput += string(msg.Runes)
 		}
 	}
+	return m, nil
+}
+
+func (m *Model) handleSessionDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "c":
+		if m.clipboardPayload != "" {
+			return m, copyToClipboard(m.clipboardPayload)
+		}
+	case "r":
+		if m.modalSessionLocalKey != nil {
+			key := m.modalSessionLocalKey
+			m.modal = ModalNone
+			m.modalSessionLocalKey = nil
+			m.clipboardPayload = ""
+			m.copied = false
+			m.view = ViewLoading
+			m.loadingText = "Revoking session..."
+			return m, m.doRevokeSession(key)
+		}
+	}
+	// Any other key closes the modal.
+	m.modal = ModalNone
+	m.modalSessionLocalKey = nil
+	m.clipboardPayload = ""
+	m.copied = false
+	m.view = m.prevView
 	return m, nil
 }
 
@@ -228,6 +258,8 @@ func (m *Model) viewModal() string {
 		)
 	case ModalConfirmRemove:
 		content = m.viewConfirmRemoveModal()
+	case ModalSessionDetail:
+		content = m.viewSessionDetailModal()
 	case ModalMacaroonType:
 		content = m.viewMacaroonTypeModal()
 	case ModalMacaroonResult:
@@ -318,6 +350,75 @@ func (m *Model) viewResultModal() string {
 		styleValue.Render(wrapped),
 		copyLine,
 		styleHelp.Render("any other key to close"),
+	)
+	return styleModal.Width(innerW).Render(body)
+}
+
+func (m *Model) viewSessionDetailModal() string {
+	innerW := m.modalInnerWidth()
+
+	// Find the session by local public key.
+	var s *litrpc.Session
+	for _, sess := range m.sessions {
+		if string(sess.LocalPublicKey) == string(m.modalSessionLocalKey) {
+			s = sess
+			break
+		}
+	}
+	if s == nil {
+		return styleModal.Width(innerW).Render(styleRed.Render("Session not found."))
+	}
+
+	stateStyle := styleNormal
+	switch s.SessionState {
+	case litrpc.SessionState_STATE_IN_USE:
+		stateStyle = styleGreen
+	case litrpc.SessionState_STATE_REVOKED, litrpc.SessionState_STATE_EXPIRED:
+		stateStyle = styleMuted
+	}
+
+	details := fmt.Sprintf(
+		"%s %s\n%s %s\n%s %s\n%s %s",
+		styleLabel.Render("Label:  "), styleValue.Render(s.Label),
+		styleLabel.Render("Type:   "), styleValue.Render(sessionTypeName(s.SessionType)),
+		styleLabel.Render("State:  "), stateStyle.Render(sessionStateName(s.SessionState)),
+		styleLabel.Render("Expiry: "), styleValue.Render(formatExpiry(int64(s.ExpiryTimestampSeconds))),
+	)
+	if s.AccountId != "" {
+		details += "\n" + styleLabel.Render("Account:") + " " + styleValue.Render(truncate(s.AccountId, innerW-10))
+	}
+
+	var phraseSection string
+	if s.PairingSecretMnemonic != "" {
+		contentW := innerW - 6
+		if contentW < 20 {
+			contentW = 20
+		}
+		phraseSection = "\n\n" + styleLabel.Render("Pairing phrase:") + "\n" +
+			styleValue.Render(wrapText(s.PairingSecretMnemonic, contentW))
+	}
+
+	// Build help line based on available actions.
+	canRevoke := s.SessionState == litrpc.SessionState_STATE_CREATED ||
+		s.SessionState == litrpc.SessionState_STATE_IN_USE
+	var helpParts []string
+	if s.PairingSecretMnemonic != "" {
+		if m.copied {
+			helpParts = append(helpParts, styleGreen.Render("✓ copied"))
+		} else {
+			helpParts = append(helpParts, "c copy phrase")
+		}
+	}
+	if canRevoke {
+		helpParts = append(helpParts, "r revoke")
+	}
+	helpParts = append(helpParts, "any other key close")
+
+	body := fmt.Sprintf("%s\n\n%s%s\n\n%s",
+		styleHeader.Render("Session Detail"),
+		details,
+		phraseSection,
+		styleHelp.Render(strings.Join(helpParts, "   ")),
 	)
 	return styleModal.Width(innerW).Render(body)
 }
