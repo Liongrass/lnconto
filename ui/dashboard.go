@@ -36,9 +36,14 @@ func (m *Model) handleDashboardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "enter", " ":
 		if len(m.accounts) > 0 {
+			acc := m.accounts[m.selectedAccount]
 			m.prevView = ViewDashboard
 			m.paymentsScroll = 0
+			m.selectedPayment = 0
+			m.enrichedPayments = nil
+			m.paymentsLoading = true
 			m.view = ViewAccountDetail
+			return m, m.doLoadPayments(acc.Payments)
 		}
 	case "n":
 		m.modal = ModalNewAccountLabel

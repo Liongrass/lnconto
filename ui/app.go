@@ -7,11 +7,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/lightninglabs/lightning-terminal/litrpc"
+	"github.com/lightningnetwork/lnd/lnrpc"
 	"github.com/lnconto/lnconto/client"
 )
 
@@ -25,6 +27,7 @@ const (
 	ViewSessions
 	ViewModal
 	ViewError
+	ViewPaymentDetail
 )
 
 // ModalKind identifies what modal is open.
@@ -61,6 +64,11 @@ type msgMacaroonSaved struct{ path string }
 type msgError struct{ err error }
 type msgLoading struct{ text string }
 type msgCopied struct{}
+type msgPaymentsLoaded struct {
+	payments     []*client.PaymentInfo
+	outgoing     []*lnrpc.Payment
+	outgoingFrom uint64 // unix timestamp of the earliest queried window start
+}
 
 // Model is the root bubbletea model.
 type Model struct {
@@ -102,11 +110,18 @@ type Model struct {
 	modalSessionLocalKey []byte // local public key of the session being viewed
 
 	// clipboard / result modal state
-	clipboardPayload     string // raw value to copy (macaroon hex or pairing phrase)
-	copied               bool   // true after a successful OSC-52 copy
-	modalResultIsMacaroon bool  // true when result is a macaroon (not a pairing phrase)
-	macaroonSaved        bool   // true after a successful file save
-	macaroonSavedPath    string // path that was last saved to
+	clipboardPayload      string // raw value to copy (macaroon hex or pairing phrase)
+	copied                bool   // true after a successful OSC-52 copy
+	modalResultIsMacaroon bool   // true when result is a macaroon (not a pairing phrase)
+	macaroonSaved         bool   // true after a successful file save
+	macaroonSavedPath     string // path that was last saved to
+
+	// enriched payment list for the current account
+	enrichedPayments []*client.PaymentInfo
+	outgoingCache    []*lnrpc.Payment
+	outgoingFrom     uint64 // unix seconds of the earliest window queried
+	paymentsLoading  bool
+	selectedPayment  int
 }
 
 // New creates the initial model.
@@ -233,14 +248,19 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for i, a := range m.accounts {
 			if a.Id == msg.account.Id {
 				m.accounts[i] = msg.account
+				// Reload enriched payments since the account data changed.
+				m.paymentsLoading = true
+				m.enrichedPayments = nil
+				m.selectedPayment = 0
+				m.paymentsScroll = 0
 				break
 			}
 		}
 		m.modal = ModalNone
 		m.modalInput = ""
-		m.paymentsScroll = 0
+		acc := m.accounts[m.selectedAccount]
 		m.view = ViewAccountDetail
-		return m, nil
+		return m, m.doLoadPayments(acc.Payments)
 
 	case msgAccountCreated:
 		m.accounts = append(m.accounts, msg.account)
@@ -271,6 +291,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case msgCopied:
 		m.copied = true
+		return m, nil
+
+	case msgPaymentsLoaded:
+		m.enrichedPayments = msg.payments
+		m.outgoingCache = msg.outgoing
+		m.outgoingFrom = msg.outgoingFrom
+		m.paymentsLoading = false
+		m.selectedPayment = 0
+		m.paymentsScroll = 0
 		return m, nil
 
 	case msgSessionCreated:
@@ -350,6 +379,10 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		if m.view == ViewPaymentDetail {
+			m.view = ViewAccountDetail
+			return m, nil
+		}
 		if m.view == ViewAccountDetail || m.view == ViewSessions || m.view == ViewError {
 			m.view = ViewDashboard
 			return m, nil
@@ -366,6 +399,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleSessionsKey(msg)
 	case ViewModal:
 		return m.handleModalKey(msg)
+	case ViewPaymentDetail:
+		return m.handlePaymentDetailKey(msg)
 	case ViewError:
 		if msg.String() == "r" {
 			m.err = nil
@@ -389,6 +424,8 @@ func (m *Model) View() string {
 		return m.viewSessions()
 	case ViewModal:
 		return m.viewModal()
+	case ViewPaymentDetail:
+		return m.viewPaymentDetail()
 	case ViewError:
 		return m.viewError()
 	}
@@ -426,6 +463,63 @@ func doSaveMacaroon(hexStr, path string) tea.Cmd {
 			return msgError{fmt.Errorf("saving macaroon: %w", err)}
 		}
 		return msgMacaroonSaved{path}
+	}
+}
+
+func (m *Model) doLoadPayments(accPayments []*litrpc.AccountPayment) tea.Cmd {
+	sinceUnix := client.OneWeekAgo()
+	return func() tea.Msg {
+		ctx := context.Background()
+		outgoing, err := m.client.ListPayments(ctx, sinceUnix)
+		if err != nil {
+			return msgError{err}
+		}
+		enriched := m.client.EnrichAccountPayments(ctx, accPayments, outgoing)
+		return msgPaymentsLoaded{
+			payments:     enriched,
+			outgoing:     outgoing,
+			outgoingFrom: sinceUnix,
+		}
+	}
+}
+
+func (m *Model) doLoadMorePayments(accPayments []*litrpc.AccountPayment) tea.Cmd {
+	// Fetch the week immediately before the current cache window.
+	endUnix := m.outgoingFrom
+	if endUnix == 0 {
+		endUnix = uint64(time.Now().Unix())
+	}
+	startUnix := uint64(0)
+	if endUnix > 7*24*3600 {
+		startUnix = endUnix - 7*24*3600
+	}
+	currentCache := m.outgoingCache
+	return func() tea.Msg {
+		ctx := context.Background()
+		more, err := m.client.ListPaymentsRange(ctx, startUnix, endUnix)
+		if err != nil {
+			return msgError{err}
+		}
+		// Merge: deduplicate by PaymentIndex.
+		seen := make(map[uint64]bool, len(currentCache))
+		for _, p := range currentCache {
+			seen[p.PaymentIndex] = true
+		}
+		merged := make([]*lnrpc.Payment, len(currentCache))
+		copy(merged, currentCache)
+		for _, p := range more {
+			if !seen[p.PaymentIndex] {
+				merged = append(merged, p)
+				seen[p.PaymentIndex] = true
+			}
+		}
+		// Re-enrich all account payments with the extended cache.
+		enriched := m.client.EnrichAccountPayments(ctx, accPayments, merged)
+		return msgPaymentsLoaded{
+			payments:     enriched,
+			outgoing:     merged,
+			outgoingFrom: startUnix,
+		}
 	}
 }
 

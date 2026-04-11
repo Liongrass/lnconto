@@ -4,15 +4,17 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/lightninglabs/lightning-terminal/litrpc"
 	"github.com/lnconto/lnconto/client"
 )
 
-// paymentListOverhead: title(1) + blank(2) + info box(~7) + blank(1) +
-// payments header(1) + column header(1) + blank(1) + help(1) = 15
-const paymentListOverhead = 15
+// paymentListOverhead: title(1) + blank(1) + info box(~6) + blank(1) +
+// payments header(1) + column header(1) + blank(1) + help(1) = 13
+const paymentListOverhead = 13
 
 func (m *Model) visiblePaymentRows() int {
 	rows := m.safeHeight() - paymentListOverhead
@@ -32,19 +34,33 @@ func (m *Model) selectedAcc() *litrpc.Account {
 func (m *Model) handleAccountDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "up", "k":
-		if m.paymentsScroll > 0 {
-			m.paymentsScroll--
+		if m.selectedPayment > 0 {
+			m.selectedPayment--
+			m.paymentsScroll = clampScroll(m.paymentsScroll, m.selectedPayment, m.visiblePaymentRows())
 		}
 	case "down", "j":
+		if m.selectedPayment < len(m.enrichedPayments)-1 {
+			m.selectedPayment++
+			m.paymentsScroll = clampScroll(m.paymentsScroll, m.selectedPayment, m.visiblePaymentRows())
+		}
+	case "enter", " ":
+		if len(m.enrichedPayments) > 0 && m.selectedPayment < len(m.enrichedPayments) {
+			m.view = ViewPaymentDetail
+		}
+	case "l":
 		acc := m.selectedAcc()
-		if acc != nil {
-			maxScroll := len(acc.Payments) - m.visiblePaymentRows()
-			if maxScroll < 0 {
-				maxScroll = 0
-			}
-			if m.paymentsScroll < maxScroll {
-				m.paymentsScroll++
-			}
+		if acc != nil && !m.paymentsLoading {
+			m.paymentsLoading = true
+			return m, m.doLoadMorePayments(acc.Payments)
+		}
+	case "r":
+		acc := m.selectedAcc()
+		if acc != nil && !m.paymentsLoading {
+			m.paymentsLoading = true
+			m.enrichedPayments = nil
+			m.selectedPayment = 0
+			m.paymentsScroll = 0
+			return m, m.doLoadPayments(acc.Payments)
 		}
 	case "c":
 		m.modal = ModalCredit
@@ -122,47 +138,46 @@ func (m *Model) viewAccountDetail() string {
 	// Width(w-2): border adds 2 outside → total = w.
 	sb.WriteString(styleSection.Width(w-2).Render(infoContent) + "\n\n")
 
-	// Payments list.
-	if len(acc.Payments) > 0 {
-		sb.WriteString(styleHeader.Render("Recent Payments") + "\n")
-		hw, sw, aw := m.paymentColWidths()
-		hdr := m.formatPaymentRow("HASH", "STATE", "AMOUNT", hw, sw, aw)
-		sb.WriteString(styleLabel.Render(hdr) + "\n")
-
-		// Most-recent-first slice.
-		reversed := make([]*litrpc.AccountPayment, len(acc.Payments))
-		for i, p := range acc.Payments {
-			reversed[len(acc.Payments)-1-i] = p
+	// Payments section.
+	if m.paymentsLoading {
+		sb.WriteString(styleMuted.Padding(0, 1).Render("Loading payments...") + "\n")
+	} else if len(m.enrichedPayments) == 0 {
+		if len(acc.Payments) > 0 {
+			sb.WriteString(styleMuted.Padding(0, 1).Render("No payment details available.") + "\n")
+		} else {
+			sb.WriteString(styleMuted.Padding(0, 1).Render("No payments.") + "\n")
 		}
+	} else {
+		sb.WriteString(styleHeader.Render("Payments") + "\n")
+		dw, tw, aw, mw := m.paymentColWidths()
+		hdr := m.formatPaymentRow("DIR  DATE", "STATUS", "AMOUNT", "MEMO", dw, tw, aw, mw)
+		sb.WriteString(styleLabel.Render(hdr) + "\n")
 
 		visible := m.visiblePaymentRows()
 		end := m.paymentsScroll + visible
-		if end > len(reversed) {
-			end = len(reversed)
-		}
-		for _, p := range reversed[m.paymentsScroll:end] {
-			hashShort := fmt.Sprintf("%x", p.Hash)
-			if len(hashShort) > hw {
-				hashShort = hashShort[:hw-1] + "…"
-			}
-			row := m.formatPaymentRow(hashShort, p.State, fmt.Sprintf("%d sats", p.FullAmount), hw, sw, aw)
-			stateStyle := styleNormal
-			if strings.Contains(p.State, "FAILED") {
-				stateStyle = styleRed
-			} else if strings.Contains(p.State, "SUCCEEDED") || strings.Contains(p.State, "SETTLED") {
-				stateStyle = styleGreen
-			}
-			sb.WriteString(stateStyle.Render(row) + "\n")
+		if end > len(m.enrichedPayments) {
+			end = len(m.enrichedPayments)
 		}
 
-		if len(acc.Payments) > visible {
+		for i := m.paymentsScroll; i < end; i++ {
+			pi := m.enrichedPayments[i]
+			dirStr := paymentDirStr(pi.Direction)
+			dateStr := formatPaymentTime(pi.TimestampNs)
+			dirDate := dirStr + " " + dateStr
+			row := m.formatPaymentRow(dirDate, pi.Status, formatBalance(pi.AmountSat), pi.Memo, dw, tw, aw, mw)
+			if i == m.selectedPayment {
+				sb.WriteString(styleSelected.Width(w).Render(row) + "\n")
+			} else {
+				sb.WriteString(paymentRowStyle(pi).Render(row) + "\n")
+			}
+		}
+
+		if len(m.enrichedPayments) > visible {
 			sb.WriteString(styleMuted.Render(fmt.Sprintf(
 				"  %d–%d of %d  (↑/↓ to scroll)",
-				m.paymentsScroll+1, end, len(acc.Payments),
+				m.paymentsScroll+1, end, len(m.enrichedPayments),
 			)) + "\n")
 		}
-	} else {
-		sb.WriteString(styleMuted.Padding(0, 1).Render("No payments.") + "\n")
 	}
 
 	// Help bar.
@@ -171,44 +186,48 @@ func (m *Model) viewAccountDetail() string {
 	return sb.String()
 }
 
-// paymentColWidths returns hash, state, amount column widths.
-// Row: hash + "  " + state + "  " + amount. Same 6-char overhead as account rows.
-func (m *Model) paymentColWidths() (hashW, stateW, amountW int) {
-	avail := m.safeWidth() - 6
-	if avail < 30 {
-		avail = 30
+// paymentColWidths returns direction+date, status, amount, memo column widths.
+func (m *Model) paymentColWidths() (dirW, statusW, amountW, memoW int) {
+	avail := m.safeWidth() - 8 // 3×"  " separators + 2 style padding
+	if avail < 40 {
+		avail = 40
 	}
-	hashW = avail * 40 / 100
-	if hashW > 22 {
-		hashW = 22
+	dirW = 14 // "← 2024-01-01" or "→ 2024-01-01"
+	statusW = avail * 20 / 100
+	if statusW > 12 {
+		statusW = 12
 	}
-	stateW = avail * 35 / 100
-	if stateW > 18 {
-		stateW = 18
+	amountW = avail * 20 / 100
+	if amountW > 14 {
+		amountW = 14
 	}
-	amountW = avail - hashW - stateW
-	if amountW < 8 {
-		amountW = 8
+	memoW = avail - dirW - statusW - amountW
+	if memoW < 6 {
+		memoW = 6
 	}
 	return
 }
 
-func (m *Model) formatPaymentRow(hash, state, amount string, hw, sw, aw int) string {
-	return fmt.Sprintf("%-*s  %-*s  %-*s",
-		hw, truncate(hash, hw),
-		sw, truncate(state, sw),
+func (m *Model) formatPaymentRow(dir, status, amount, memo string, dw, sw, aw, mw int) string {
+	return fmt.Sprintf("%-*s  %-*s  %-*s  %-*s",
+		dw, truncate(dir, dw),
+		sw, truncate(status, sw),
 		aw, truncate(amount, aw),
+		mw, truncate(memo, mw),
 	)
 }
 
 func (m *Model) accountDetailHelp() string {
+	if m.safeWidth() >= 80 {
+		return "↑/↓ navigate   enter detail   l load more   r refresh   c credit   d debit   e expiry   s session   m mac   esc back"
+	}
 	if m.safeWidth() >= 68 {
-		return "c credit   d debit   e expiry   s LNC session   m macaroon   esc back"
+		return "↑/↓ enter   l more   r ref   c credit   d debit   e expiry   s session   m mac   esc"
 	}
 	if m.safeWidth() >= 50 {
-		return "c credit  d debit  e expiry  s session  m mac  esc"
+		return "↑/↓ enter  l  r  c  d  e  s  m  esc"
 	}
-	return "c d e s m   esc back"
+	return "↑/↓ l r c d e s m  esc"
 }
 
 func formatBalanceStyled(sats int64) string {
@@ -216,6 +235,44 @@ func formatBalanceStyled(sats int64) string {
 		return styleRed.Render(fmt.Sprintf("-%d sats", -sats))
 	}
 	return styleGreen.Render(fmt.Sprintf("%d sats", sats))
+}
+
+func paymentDirStr(d client.PaymentDirection) string {
+	switch d {
+	case client.DirectionIncoming:
+		return "←"
+	case client.DirectionOutgoing:
+		return "→"
+	default:
+		return "?"
+	}
+}
+
+func paymentRowStyle(pi *client.PaymentInfo) lipgloss.Style {
+	switch pi.Direction {
+	case client.DirectionIncoming:
+		return styleGreen
+	case client.DirectionOutgoing:
+		if strings.Contains(pi.Status, "FAILED") {
+			return styleRed
+		}
+		return styleNormal
+	default:
+		return styleMuted
+	}
+}
+
+func formatPaymentTime(nsec int64) string {
+	if nsec == 0 {
+		return "unknown"
+	}
+	t := time.Unix(nsec/1_000_000_000, nsec%1_000_000_000)
+	now := time.Now()
+	diff := now.Sub(t)
+	if diff < 24*time.Hour {
+		return t.Format("15:04")
+	}
+	return t.Format("2006-01-02")
 }
 
 func (m *Model) doCreditAccount(amount uint64) tea.Cmd {
