@@ -64,6 +64,7 @@ func DefaultConfig() *Config {
 // Client wraps all gRPC sub-clients for litd.
 type Client struct {
 	conn      *grpc.ClientConn
+	Network   string // "mainnet", "testnet", "regtest", etc.
 	Lightning lnrpc.LightningClient
 	Accounts  litrpc.AccountsClient
 	Sessions  litrpc.SessionsClient
@@ -113,6 +114,7 @@ func New(cfg *Config) (*Client, error) {
 
 	return &Client{
 		conn:      conn,
+		Network:   cfg.Network,
 		Proxy:     proxy,
 		Lightning: lnrpc.NewLightningClient(conn),
 		Accounts:  litrpc.NewAccountsClient(conn),

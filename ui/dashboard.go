@@ -43,7 +43,7 @@ func (m *Model) handleDashboardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.enrichedPayments = nil
 			m.paymentsLoading = true
 			m.view = ViewAccountDetail
-			return m, m.doLoadPayments(acc.Payments)
+			return m, m.doLoadPayments(acc.Id)
 		}
 	case "n":
 		m.modal = ModalNewAccountLabel

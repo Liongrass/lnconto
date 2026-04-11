@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/lightninglabs/lightning-terminal/litrpc"
+	"github.com/lightningnetwork/lnd/lnrpc"
 	"github.com/lnconto/lnconto/client"
 )
 
@@ -46,12 +47,6 @@ func (m *Model) handleAccountDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter", " ":
 		if len(m.enrichedPayments) > 0 && m.selectedPayment < len(m.enrichedPayments) {
 			m.view = ViewPaymentDetail
-		}
-	case "l":
-		acc := m.selectedAcc()
-		if acc != nil && !m.paymentsLoading {
-			m.paymentsLoading = true
-			return m, m.doLoadMorePayments(acc.Payments)
 		}
 	case "r":
 		if !m.paymentsLoading {
@@ -143,9 +138,9 @@ func (m *Model) viewAccountDetail() string {
 			sb.WriteString(styleMuted.Padding(0, 1).Render("No payments.") + "\n")
 		}
 	} else {
-		sb.WriteString(styleHeader.Render("Payments") + "\n")
-		dw, tw, aw, mw := m.paymentColWidths()
-		hdr := m.formatPaymentRow("DIR  DATE", "STATUS", "AMOUNT", "MEMO", dw, tw, aw, mw)
+		sb.WriteString(styleHeader.Render(fmt.Sprintf("Payments (%d)", len(m.enrichedPayments))) + "\n")
+		dw, sw, aw, fw, mw := m.paymentColWidths()
+		hdr := m.formatPaymentRow("→ DATE", "STATUS", "AMOUNT", "FEE", "MEMO", dw, sw, aw, fw, mw)
 		sb.WriteString(styleLabel.Render(hdr) + "\n")
 
 		visible := m.visiblePaymentRows()
@@ -156,10 +151,15 @@ func (m *Model) viewAccountDetail() string {
 
 		for i := m.paymentsScroll; i < end; i++ {
 			pi := m.enrichedPayments[i]
-			dirStr := paymentDirStr(pi.Direction)
-			dateStr := formatPaymentTime(pi.TimestampNs)
-			dirDate := dirStr + " " + dateStr
-			row := m.formatPaymentRow(dirDate, pi.Status, formatBalance(pi.AmountSat), pi.Memo, dw, tw, aw, mw)
+			p := pi.Payment
+			dateStr := "→ " + formatPaymentTime(p.CreationTimeNs)
+			statusStr := paymentStatusStr(p)
+			amtStr := formatBalance(p.ValueSat)
+			feeStr := ""
+			if p.FeeSat > 0 {
+				feeStr = fmt.Sprintf("%d", p.FeeSat)
+			}
+			row := m.formatPaymentRow(dateStr, statusStr, amtStr, feeStr, pi.Memo, dw, sw, aw, fw, mw)
 			if i == m.selectedPayment {
 				sb.WriteString(styleSelected.Width(w).Render(row) + "\n")
 			} else {
@@ -181,48 +181,46 @@ func (m *Model) viewAccountDetail() string {
 	return sb.String()
 }
 
-// paymentColWidths returns direction+date, status, amount, memo column widths.
-func (m *Model) paymentColWidths() (dirW, statusW, amountW, memoW int) {
-	avail := m.safeWidth() - 8 // 3×"  " separators + 2 style padding
-	if avail < 40 {
-		avail = 40
+// paymentColWidths returns dir+date, status, amount, fee, memo column widths.
+// Row: dir + "  " + status + "  " + amount + "  " + fee + "  " + memo
+// = 4 separators (8 chars) + 2 style padding = 10 chars overhead.
+func (m *Model) paymentColWidths() (dirW, statusW, amountW, feeW, memoW int) {
+	avail := m.safeWidth() - 10
+	if avail < 50 {
+		avail = 50
 	}
-	dirW = 14 // "← 2024-01-01" or "→ 2024-01-01"
-	statusW = avail * 20 / 100
-	if statusW > 12 {
-		statusW = 12
-	}
-	amountW = avail * 20 / 100
-	if amountW > 14 {
-		amountW = 14
-	}
-	memoW = avail - dirW - statusW - amountW
+	dirW = 13 // "→ 2024-01-01" or "→ 15:04"
+	statusW = 10
+	amountW = 12
+	feeW = 8
+	memoW = avail - dirW - statusW - amountW - feeW
 	if memoW < 6 {
 		memoW = 6
 	}
 	return
 }
 
-func (m *Model) formatPaymentRow(dir, status, amount, memo string, dw, sw, aw, mw int) string {
-	return fmt.Sprintf("%-*s  %-*s  %-*s  %-*s",
+func (m *Model) formatPaymentRow(dir, status, amount, fee, memo string, dw, sw, aw, fw, mw int) string {
+	return fmt.Sprintf("%-*s  %-*s  %-*s  %-*s  %-*s",
 		dw, truncate(dir, dw),
 		sw, truncate(status, sw),
 		aw, truncate(amount, aw),
+		fw, truncate(fee, fw),
 		mw, truncate(memo, mw),
 	)
 }
 
 func (m *Model) accountDetailHelp() string {
 	if m.safeWidth() >= 80 {
-		return "↑/↓ navigate   enter detail   l load more   r refresh   c credit   d debit   e expiry   s session   m mac   esc back"
+		return "↑/↓ navigate   enter detail   r refresh   c credit   d debit   e expiry   s session   m mac   esc back"
 	}
 	if m.safeWidth() >= 68 {
-		return "↑/↓ enter   l more   r ref   c credit   d debit   e expiry   s session   m mac   esc"
+		return "↑/↓ enter   r refresh   c credit   d debit   e expiry   s session   m mac   esc"
 	}
 	if m.safeWidth() >= 50 {
-		return "↑/↓ enter  l  r  c  d  e  s  m  esc"
+		return "↑/↓ enter  r  c  d  e  s  m  esc"
 	}
-	return "↑/↓ l r c d e s m  esc"
+	return "↑/↓ r c d e s m  esc"
 }
 
 func formatBalanceStyled(sats int64) string {
@@ -232,26 +230,27 @@ func formatBalanceStyled(sats int64) string {
 	return styleGreen.Render(fmt.Sprintf("%d sats", sats))
 }
 
-func paymentDirStr(d client.PaymentDirection) string {
-	switch d {
-	case client.DirectionIncoming:
-		return "←"
-	case client.DirectionOutgoing:
-		return "→"
+func paymentStatusStr(p *lnrpc.Payment) string {
+	switch p.Status {
+	case lnrpc.Payment_SUCCEEDED:
+		return "SUCCEEDED"
+	case lnrpc.Payment_FAILED:
+		return "FAILED"
+	case lnrpc.Payment_IN_FLIGHT:
+		return "IN_FLIGHT"
 	default:
-		return "?"
+		return p.Status.String()
 	}
 }
 
 func paymentRowStyle(pi *client.PaymentInfo) lipgloss.Style {
-	switch pi.Direction {
-	case client.DirectionIncoming:
-		return styleGreen
-	case client.DirectionOutgoing:
-		if strings.Contains(pi.Status, "FAILED") {
-			return styleRed
-		}
+	switch pi.Payment.Status {
+	case lnrpc.Payment_SUCCEEDED:
 		return styleNormal
+	case lnrpc.Payment_FAILED:
+		return styleRed
+	case lnrpc.Payment_IN_FLIGHT:
+		return styleWarning
 	default:
 		return styleMuted
 	}
