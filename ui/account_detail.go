@@ -151,7 +151,7 @@ func (m *Model) viewAccountDetail() string {
 	} else {
 		sb.WriteString(styleHeader.Render(fmt.Sprintf("Payments (%d)", len(m.enrichedPayments))) + "\n")
 		dw, sw, aw, fw, mw := m.paymentColWidths()
-		hdr := m.formatPaymentRow("→ DATE", "STATUS", "AMOUNT", "FEE", "MEMO", dw, sw, aw, fw, mw)
+		hdr := m.formatPaymentRow("DATE", "STATUS", "AMOUNT", "FEE", "MEMO", dw, sw, aw, fw, mw)
 		sb.WriteString(styleLabel.Render(hdr) + "\n")
 
 		visible := m.visiblePaymentRows()
@@ -169,7 +169,7 @@ func (m *Model) viewAccountDetail() string {
 				if ts == 0 {
 					ts = inv.CreationDate
 				}
-				dateStr = "← " + formatPaymentTimeSec(ts)
+				dateStr = "↘" + formatPaymentTimeSec(ts)
 				statusStr = invoiceStatusStr(inv)
 				amt := inv.AmtPaidSat
 				if amt == 0 {
@@ -178,7 +178,7 @@ func (m *Model) viewAccountDetail() string {
 				amtStr = formatBalance(amt)
 			} else {
 				p := pi.Payment
-				dateStr = "→ " + formatPaymentTime(p.CreationTimeNs)
+				dateStr = "↗" + formatPaymentTime(p.CreationTimeNs)
 				statusStr = paymentStatusStr(p)
 				amtStr = formatBalance(p.ValueSat)
 				if p.FeeSat > 0 {
