@@ -62,6 +62,11 @@ var (
 	styleMuted = lipgloss.NewStyle().
 			Foreground(colorMuted)
 
+	// Payment list row styles — no bold, no padding so all rows are flush.
+	stylePaymentIn    = lipgloss.NewStyle().Foreground(colorSuccess)
+	stylePaymentOut   = lipgloss.NewStyle().Foreground(colorDanger)
+	stylePaymentOther = lipgloss.NewStyle().Foreground(colorText)
+
 	styleHelp = lipgloss.NewStyle().
 			Foreground(colorSecondary).
 			Padding(0, 1)

@@ -284,25 +284,15 @@ func invoiceStatusStr(inv *lnrpc.Invoice) string {
 
 func paymentRowStyle(pi *client.PaymentInfo) lipgloss.Style {
 	if pi.IsIncoming() {
-		switch pi.Invoice.State {
-		case lnrpc.Invoice_SETTLED:
-			return styleGreen
-		case lnrpc.Invoice_CANCELED:
-			return styleRed
-		default:
-			return styleNormal
+		if pi.Invoice.State == lnrpc.Invoice_SETTLED {
+			return stylePaymentIn
 		}
+		return stylePaymentOther
 	}
-	switch pi.Payment.Status {
-	case lnrpc.Payment_SUCCEEDED:
-		return styleNormal
-	case lnrpc.Payment_FAILED:
-		return styleRed
-	case lnrpc.Payment_IN_FLIGHT:
-		return styleWarning
-	default:
-		return styleMuted
+	if pi.Payment.Status == lnrpc.Payment_SUCCEEDED {
+		return stylePaymentOut
 	}
+	return stylePaymentOther
 }
 
 // formatPaymentTimeSec formats a unix-second timestamp for the payment list.
