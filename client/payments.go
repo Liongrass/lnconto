@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/lightningnetwork/lnd/lnrpc"
@@ -10,10 +11,28 @@ import (
 	"google.golang.org/grpc"
 )
 
-// PaymentInfo wraps an lnrpc.Payment with a pre-decoded memo.
+// PaymentInfo holds either an outgoing payment or an incoming invoice.
+// Exactly one of Payment or Invoice is non-nil.
 type PaymentInfo struct {
-	Payment *lnrpc.Payment
+	Payment *lnrpc.Payment  // non-nil for outgoing payments
+	Invoice *lnrpc.Invoice  // non-nil for incoming invoices
 	Memo    string
+}
+
+// IsIncoming reports whether this is an incoming invoice.
+func (pi *PaymentInfo) IsIncoming() bool { return pi.Invoice != nil }
+
+// TimestampSec returns a unix-second timestamp suitable for sorting.
+// For invoices: settle date if settled, otherwise creation date.
+// For payments: creation time converted from nanoseconds.
+func (pi *PaymentInfo) TimestampSec() int64 {
+	if pi.Invoice != nil {
+		if pi.Invoice.SettleDate > 0 {
+			return pi.Invoice.SettleDate
+		}
+		return pi.Invoice.CreationDate
+	}
+	return pi.Payment.CreationTimeNs / 1_000_000_000
 }
 
 // ListAccountPayments bakes a readonly account-attenuated macaroon and opens a
@@ -39,7 +58,10 @@ func (c *Client) ListAccountPayments(ctx context.Context, accountID string) ([]*
 	}
 	defer conn.Close()
 
-	resp, err := lnrpc.NewLightningClient(conn).ListPayments(ctx, &lnrpc.ListPaymentsRequest{
+	lightning := lnrpc.NewLightningClient(conn)
+
+	// Outgoing payments.
+	payResp, err := lightning.ListPayments(ctx, &lnrpc.ListPaymentsRequest{
 		Reversed:          true,
 		IncludeIncomplete: true,
 	})
@@ -47,13 +69,39 @@ func (c *Client) ListAccountPayments(ctx context.Context, accountID string) ([]*
 		return nil, fmt.Errorf("ListPayments: %w", err)
 	}
 
-	result := make([]*PaymentInfo, len(resp.Payments))
-	for i, p := range resp.Payments {
-		result[i] = &PaymentInfo{
+	// Incoming invoices.
+	invResp, err := lightning.ListInvoices(ctx, &lnrpc.ListInvoiceRequest{
+		Reversed: true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("ListInvoices: %w", err)
+	}
+
+	var result []*PaymentInfo
+
+	for _, p := range payResp.Payments {
+		result = append(result, &PaymentInfo{
 			Payment: p,
 			Memo:    decodeMemo(p.PaymentRequest, c.Network),
-		}
+		})
 	}
+
+	for _, inv := range invResp.Invoices {
+		memo := inv.Memo
+		if memo == "" {
+			memo = decodeMemo(inv.PaymentRequest, c.Network)
+		}
+		result = append(result, &PaymentInfo{
+			Invoice: inv,
+			Memo:    memo,
+		})
+	}
+
+	// Sort newest first.
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].TimestampSec() > result[j].TimestampSec()
+	})
+
 	return result, nil
 }
 

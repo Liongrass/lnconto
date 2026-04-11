@@ -151,13 +151,28 @@ func (m *Model) viewAccountDetail() string {
 
 		for i := m.paymentsScroll; i < end; i++ {
 			pi := m.enrichedPayments[i]
-			p := pi.Payment
-			dateStr := "→ " + formatPaymentTime(p.CreationTimeNs)
-			statusStr := paymentStatusStr(p)
-			amtStr := formatBalance(p.ValueSat)
-			feeStr := ""
-			if p.FeeSat > 0 {
-				feeStr = fmt.Sprintf("%d", p.FeeSat)
+			var dateStr, statusStr, amtStr, feeStr string
+			if pi.IsIncoming() {
+				inv := pi.Invoice
+				ts := inv.SettleDate
+				if ts == 0 {
+					ts = inv.CreationDate
+				}
+				dateStr = "← " + formatPaymentTimeSec(ts)
+				statusStr = invoiceStatusStr(inv)
+				amt := inv.AmtPaidSat
+				if amt == 0 {
+					amt = inv.Value
+				}
+				amtStr = formatBalance(amt)
+			} else {
+				p := pi.Payment
+				dateStr = "→ " + formatPaymentTime(p.CreationTimeNs)
+				statusStr = paymentStatusStr(p)
+				amtStr = formatBalance(p.ValueSat)
+				if p.FeeSat > 0 {
+					feeStr = fmt.Sprintf("%d", p.FeeSat)
+				}
 			}
 			row := m.formatPaymentRow(dateStr, statusStr, amtStr, feeStr, pi.Memo, dw, sw, aw, fw, mw)
 			if i == m.selectedPayment {
@@ -243,7 +258,30 @@ func paymentStatusStr(p *lnrpc.Payment) string {
 	}
 }
 
+func invoiceStatusStr(inv *lnrpc.Invoice) string {
+	switch inv.State {
+	case lnrpc.Invoice_SETTLED:
+		return "SETTLED"
+	case lnrpc.Invoice_CANCELED:
+		return "CANCELED"
+	case lnrpc.Invoice_ACCEPTED:
+		return "ACCEPTED"
+	default:
+		return "OPEN"
+	}
+}
+
 func paymentRowStyle(pi *client.PaymentInfo) lipgloss.Style {
+	if pi.IsIncoming() {
+		switch pi.Invoice.State {
+		case lnrpc.Invoice_SETTLED:
+			return styleGreen
+		case lnrpc.Invoice_CANCELED:
+			return styleRed
+		default:
+			return styleNormal
+		}
+	}
 	switch pi.Payment.Status {
 	case lnrpc.Payment_SUCCEEDED:
 		return styleNormal
@@ -254,6 +292,11 @@ func paymentRowStyle(pi *client.PaymentInfo) lipgloss.Style {
 	default:
 		return styleMuted
 	}
+}
+
+// formatPaymentTimeSec formats a unix-second timestamp for the payment list.
+func formatPaymentTimeSec(sec int64) string {
+	return formatPaymentTime(sec * 1_000_000_000)
 }
 
 func formatPaymentTime(nsec int64) string {
