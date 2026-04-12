@@ -16,7 +16,8 @@ import (
 
 func (m *Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.modal {
-	case ModalCredit, ModalDebit, ModalExpiry, ModalNewSession, ModalNewSessionExpiry,
+	case ModalCredit, ModalDebit, ModalExpiry, ModalLabel,
+		ModalNewSession, ModalNewSessionExpiry,
 		ModalNewAccountLabel, ModalNewAccountBalance, ModalNewAccountExpiry,
 		ModalSaveMacaroon,
 		ModalNewGeneralSessionPerms, ModalNewGeneralSessionLabel, ModalNewGeneralSessionExpiry:
@@ -171,6 +172,11 @@ func (m *Model) submitModal() (tea.Model, tea.Cmd) {
 	input := strings.TrimSpace(m.modalInput)
 
 	switch m.modal {
+	case ModalLabel:
+		m.view = ViewLoading
+		m.loadingText = "Updating label..."
+		return m, m.doUpdateLabel(input)
+
 	case ModalCredit:
 		amount, err := strconv.ParseUint(input, 10, 64)
 		if err != nil || amount == 0 {
@@ -338,6 +344,8 @@ func (m *Model) viewModal() string {
 	var content string
 
 	switch m.modal {
+	case ModalLabel:
+		content = m.viewTextInputModal("Rename Account", "New label:", "e.g. My Budget")
 	case ModalCredit:
 		content = m.viewTextInputModal("Credit Account", "Amount in satoshis:", "e.g. 100000")
 	case ModalDebit:

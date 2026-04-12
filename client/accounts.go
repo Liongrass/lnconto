@@ -80,6 +80,20 @@ func (c *Client) CreateAccount(ctx context.Context, balance uint64, label string
 	return resp.Account, nil
 }
 
+// UpdateLabel sets a new label for an account, preserving the current expiry.
+func (c *Client) UpdateLabel(ctx context.Context, id string, label string, currentExpiryUnix int64) (*litrpc.Account, error) {
+	resp, err := c.Accounts.UpdateAccount(ctx, &litrpc.UpdateAccountRequest{
+		Id:             id,
+		AccountBalance: -1, // do not change balance
+		ExpirationDate: currentExpiryUnix,
+		Label:          label,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("UpdateAccount: %w", err)
+	}
+	return resp, nil
+}
+
 // RemoveAccount deletes an account by ID.
 func (c *Client) RemoveAccount(ctx context.Context, id string) error {
 	_, err := c.Accounts.RemoveAccount(ctx, &litrpc.RemoveAccountRequest{Id: id})

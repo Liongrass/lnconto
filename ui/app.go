@@ -43,6 +43,7 @@ const (
 	ModalNewAccountLabel
 	ModalNewAccountBalance
 	ModalNewAccountExpiry
+	ModalLabel
 	ModalConfirmRemove
 	ModalSessionDetail
 	ModalSaveMacaroon

@@ -52,6 +52,14 @@ func (m *Model) handleAccountDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if !m.paymentsLoading {
 			return m, m.doGetAccount()
 		}
+	case "a":
+		acc := m.selectedAcc()
+		if acc != nil {
+			m.modal = ModalLabel
+			m.modalInput = acc.Label
+			m.prevView = ViewAccountDetail
+			m.view = ViewModal
+		}
 	case "c":
 		m.modal = ModalCredit
 		m.modalTitle = "Credit Account"
@@ -237,16 +245,16 @@ func (m *Model) formatPaymentRow(dir, status, amount, fee, memo string, dw, sw, 
 }
 
 func (m *Model) accountDetailHelp() string {
-	if m.safeWidth() >= 80 {
-		return "↑/↓ navigate   enter detail   r refresh   c credit   d debit   e expiry   s session   m mac   esc back"
+	if m.safeWidth() >= 90 {
+		return "↑/↓ navigate   enter detail   r refresh   a label   c credit   d debit   e expiry   s session   m mac   esc back"
 	}
-	if m.safeWidth() >= 68 {
-		return "↑/↓ enter   r refresh   c credit   d debit   e expiry   s session   m mac   esc"
+	if m.safeWidth() >= 70 {
+		return "↑/↓ enter   r ref   a label   c credit   d debit   e expiry   s session   m mac   esc"
 	}
 	if m.safeWidth() >= 50 {
-		return "↑/↓ enter  r  c  d  e  s  m  esc"
+		return "↑/↓ enter  r  a  c  d  e  s  m  esc"
 	}
-	return "↑/↓ r c d e s m  esc"
+	return "↑/↓ r a c d e s m  esc"
 }
 
 func formatBalanceStyled(sats int64) string {
@@ -332,6 +340,23 @@ func formatPaymentTime(nsec int64) string {
 		return t.Format("15:04")
 	}
 	return t.Format("2006-01-02")
+}
+
+func (m *Model) doUpdateLabel(label string) tea.Cmd {
+	acc := m.selectedAcc()
+	if acc == nil {
+		return nil
+	}
+	id := acc.Id
+	expiry := acc.ExpirationDate
+	return func() tea.Msg {
+		ctx := context.Background()
+		updated, err := m.client.UpdateLabel(ctx, id, label, expiry)
+		if err != nil {
+			return msgError{err}
+		}
+		return msgAccountUpdated{updated}
+	}
 }
 
 func (m *Model) doGetAccount() tea.Cmd {
